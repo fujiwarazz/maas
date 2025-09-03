@@ -13,14 +13,12 @@ from langchain_community.chat_models.tongyi import ChatTongyi
 from google import genai
 from google.genai import types
 from langgraph.prebuilt import ToolNode
+from proposalAgent.agents.utils.agent_utils import Toolkit
 
 from proposalAgent.agents import *
 from proposalAgent.model_config import TONGYI_CONFIG
 from proposalAgent.agents.utils.memory import EmbeddingMemory
-from proposalAgent.agents.utils.agent_states import (
-    AgentState,
-
-)
+from proposalAgent.agents.utils.agent_states import AgentState
 # from proposalAgent.agents.utils.tools_interface import set_config
 
 from .conditional_logic import ConditionalLogic
@@ -89,39 +87,13 @@ class ProposalAgentGraph:
         self.graph = self.graph_setup.setup_graph()
     
     def _create_tool_nodes(self):
-        return{
-            "structure":ToolNode(
-                [self.toolkit.get_structure_infomation]
-            ),
-            "planning":ToolNode(
-                [self.toolkit.get_planning,
-                 self.toolkit.get_intention]
-            ),
-            "academic":ToolNode(
-                [self.toolkit.get_academic_infomation]
-            ),
-            "feasibility":ToolNode(
-                [self.toolkit.get_feasibility_infomation]
-            ),
-            "innovation":ToolNode(
-                [self.toolkit.get_innovation_infomation]
-            ),
-            "risk":ToolNode(
-                [self.toolkit.get_risk_infomation]
-            ),
-            "interdisciplinary":ToolNode(
-                [self.toolkit.get_interdisciplinary_infomation]
-            ),
-            "future_influence":ToolNode(
-                [self.toolkit.get_future_influence_infomation]
-            ),
-            "impact":ToolNode(
-                [self.toolkit.get_impact_infomation]
-            ),
-            "collector":ToolNode(
-                [self.toolkit.get_collector_infomation]
-            ),
-          
+        return {
+            "academic": ToolNode([]),
+            "social": ToolNode([]),
+            "influence": ToolNode([]),
+            "interdisciplinary": ToolNode([]),
+            "feasibility": ToolNode([]),
+            "innovation": ToolNode([]),
         }
     
     

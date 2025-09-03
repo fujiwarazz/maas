@@ -17,4 +17,13 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 class Toolkit:
     
-    _config = 
+    _config = TONGYI_CONFIG
+
+    def __init__(self, config: dict = None):
+        self._config = config or self._config
+
+    def get_config(self) -> dict:
+        return self._config
+    
+    def set_config(self, config: dict):
+        self._config = config

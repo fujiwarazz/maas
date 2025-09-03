@@ -36,7 +36,6 @@ class GraphSetup:
         academic_memory:Any,
         feasibility_memory:Any,
         innovation_memory:Any,
-        
     ):
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_think_llm = deep_think_llm
@@ -64,7 +63,7 @@ class GraphSetup:
         
         
         # stage 1
-        structure_node = create_structure_agent(self.structure_llm,tools=self.toolkit.get_tools['output'])
+        structure_node = create_structure_node(self.structure_llm,tools=self.toolkit.get_tools['output'])
         planning_node = create_planning_agent(self.deep_think_llm,self.planning_memory)
 
         # stage 2

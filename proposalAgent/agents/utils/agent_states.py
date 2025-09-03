@@ -35,6 +35,7 @@ class AgentState(MessagesState):
     它聚合了所有阶段和节点产生的信息，驱动整个决策流程。
     """
     # --- 阶段 0 & 1: 初始输入与规划 ---
+    filepath: Annotated[str, "The path of the pdf file"] # 整个流程的起点，由用户输入的初始研究主题或问题。
     research_topic: Annotated[str, "The initial user input or research topic"] # 整个流程的起点，由用户输入的初始研究主题或问题。
     intention_decision: Annotated[
         str, "Decision from the intention node, e.g., 'output' or 'structure'"

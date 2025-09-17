@@ -81,28 +81,28 @@ class ConditionalLogic:
         return "output_node" if should else "structure_node"
     
     
-    def route_after_planning(self,state: AgentState) -> str | list[str]:
-        """
-        This function now directly decides the next step(s).
-        It returns either a single string (node name) or a list of strings (parallel nodes).
-        """
-        print("--- Deciding next step after planning ---")
-        # Add the self. prefix to the method call
-        if self.should_route_to_output(state):
-            print(">>> Routing to: output_tool")
-            return "output_node"
-        else:
-            print(">>> Routing to: parallel analysis nodes")
-            parallel_nodes = [
-                "impact analyst",
-                "future influence analyst",
-                "risk analyst",
-                "interdisciplinary analyst",
-                "academic analyst",
-                "feasibility analyst",
-                "innovation analyst",
-            ]
-            return parallel_nodes
+    # def route_after_planning(self,state: AgentState) -> str | list[str]:
+    #     """
+    #     This function now directly decides the next step(s).
+    #     It returns either a single string (node name) or a list of strings (parallel nodes).
+    #     """
+    #     print("--- Deciding next step after planning ---")
+    #     # Add the self. prefix to the method call
+    #     if self.should_route_to_output(state):
+    #         print(">>> Routing to: output_tool")
+    #         return "output_node"
+    #     else:
+    #         print(">>> Routing to: parallel analysis nodes")
+    #         parallel_nodes = [
+    #             "impact analyst",
+    #             "future influence analyst",
+    #             "risk analyst",
+    #             "interdisciplinary analyst",
+    #             "academic analyst",
+    #             "feasibility analyst",
+    #             "innovation analyst",
+    #         ]
+    #         return parallel_nodes
 
 
 
@@ -191,21 +191,3 @@ class ConditionalLogic:
 
     # 额外的风控/影响判断函数已删除（未在当前流程中使用且类型与 AgentState 不一致）
 
-
-# ========== 模块级别函数，兼容 setup.py 的直接引用 ==========
-_default_logic = ConditionalLogic()
-
-def should_output(state: AgentState) -> str:
-    return _default_logic.should_output(state)
-
-def should_continue_academic_analysis(state: AgentState) -> str:
-    return _default_logic.should_continue_academic_analysis(state)
-
-def should_continue_social_analysis(state: AgentState) -> str:
-    return _default_logic.should_continue_social_analysis(state)
-
-def should_continue_future_influence(state: AgentState) -> str:
-    return _default_logic.should_continue_future_influence(state)
-
-def should_continue_interdisciplinary(state: AgentState) -> str:
-    return _default_logic.should_continue_interdisciplinary(state)

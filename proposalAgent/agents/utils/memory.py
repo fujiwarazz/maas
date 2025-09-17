@@ -1,15 +1,13 @@
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
-from proposalAgent.config import TONGYI_CONFIG
+from proposalAgent.model_config import TONGYI_CONFIG
 
 class EmbeddingMemory:
     def __init__(self, name, config):
-        if config["backend_url"] == "http://localhost:11434/v1":
-            self.embedding = "nomic-embed-text"
-        else:
-            self.embedding = "text-embedding-v3"
-        self.client = OpenAI(base_url=config["backend_url"])
+        """Initialize the EmbeddingMemory with a ChromaDB collection"""
+        self.embedding = "text-embedding-v3"
+        self.client = OpenAI(base_url=config["backend_url"],api_key=config["api_key"])
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         self.situation_collection = self.chroma_client.create_collection(name=name)
 

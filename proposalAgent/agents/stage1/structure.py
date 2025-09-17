@@ -1,6 +1,4 @@
 from turtle import st
-from proposalAgent.utils.logger import get_logger
-from proposalAgent.agents.utils.agent_states import AgentState
 from google.genai import types
 import pathlib
 import time
@@ -26,10 +24,9 @@ import sys
 
 client = genai.Client()
 
-async def get_genai_output(prompt: str,filepath:pathlib.Path):
+def get_genai_output(prompt: str,filepath:pathlib.Path):
     client = genai.Client()
-    asyncClient = client.aio
-    response = await asyncClient.models.generate_content(
+    response = client.models.generate_content(
         model="gemini-2.5-flash-lite",
         contents=[
         types.Part.from_bytes(
@@ -40,11 +37,11 @@ async def get_genai_output(prompt: str,filepath:pathlib.Path):
     )
     return response.text
 
-def create_structure_node(llm,toolkit):
+def create_structure_node():
     
-    async def get_structure_output_node(state:AgentState):
-        filepath =  pathlib.Path(state["filepath"])
-        tools = toolkit.get_tools["output"]
+    def get_structure_output_node(state):
+        print(state)
+        filepath =  pathlib.Path(state["file_path"])
         
         prompt = """
             ### 角色描述
@@ -60,13 +57,46 @@ def create_structure_node(llm,toolkit):
             输出这四个部分内容同时使用: ============= 进行分割
             """
 
-        res = await get_genai_output(prompt,filepath)
+        res = get_genai_output(prompt,filepath)
         
+        result_items = res.split("=============") if "=============" in res else [res, "", "", ""]
+        
+        # 读取filepath的第一页内容
+        from PyPDF2 import PdfReader
+
+        def read_first_page_text(filepath):
+            try:
+                reader = PdfReader(str(filepath))
+                if len(reader.pages) > 0:
+                    first_page = reader.pages[1]
+                    return first_page.extract_text()
+                else:
+                    return ""
+            except Exception as e:
+                print(f"读取PDF第一页失败: {e}")
+                return ""
+
+        first_page_text = read_first_page_text(filepath)
+        print("PDF第一页内容如下：")
+        print(first_page_text)
+
         return {
-            "research_structure": res
+            "research_structure": res,
+            "research_basic_info": first_page_text,
+            "research_person_info": result_items[0],
+            "research_project_team_info": result_items[1],
+            "research_project_apply_info": result_items[2],
+            "research_report_body_summary": result_items[3]
         }
         
-    return get_structure_output_node
+    node = get_structure_output_node
+    return node
         
 
         
+if __name__ == "__main__":
+    
+    structure_agent = create_structure_node()
+    result = structure_agent({"messages": [("user", "分析这篇文章")],"file_path":"/Users/peelsannaw/Desktop/提交版本.pdf"})
+    result_items = result['research_structure'].split("============")
+    print("\n=======================".join(result_items))

@@ -14,6 +14,10 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
 )
+
+from PyPDF2 import PdfReader
+
+        
 import asyncio
 import sys
 sys.path.append("/Users/peelsannaw/Desktop/codes/maas/mas4proposal")
@@ -57,21 +61,21 @@ async def get_pdf_output(filepath:pathlib.Path):
     ### 任务描述
     将这篇国家自然基金项目申请书中的重要数据进行抽取。
     包含了以下内容：
+    - 项目申请书基本信息，一般包含项目名称、项目申请代码(F02,G01等)、中英文关键词，要保证内容充足,申请代码可能有多个不能丢失
     - 申请人的个人履历,相关经历和论文背景
     - 项目团队成员及其个人履历,相关经历和论文背景
     - 项目申请信息(表格数据等内容)
     - 报告正文,对于报告正文部分可以做总结,但是要保留完整意思。项目正文部分往往包括：1、项目的立项依据(项目背景和意义)；2、项目的主要内容以及目标或拟解决的关键问题；3、拟采取的方案的可行性分析；4、本项目的特色与创新之处；5、年度计划及预期结果；6、工作基础及保障措施(工作条件、个人相关方面的研究基础和保障措施)。
     需要给出对应的出现的[页面],比如[P10]
-    输出这四个部分内容同时使用: =============进行分割
+    输出这五个部分内容同时使用: =================== 进行分割
     """
-    
     
     time_start = time.time()
 
     res = await get_genai_output(prompt,filepath)
     try:
         print(f"res:{res}")
-        proposal_output = ProposalOutput(**json.loads(res))
+        return res
     except:
         logger.error(f"get genai output error: {res},return origin output")
         return res
@@ -79,13 +83,20 @@ async def get_pdf_output(filepath:pathlib.Path):
     print(f"time cost: {time_end - time_start}")
     return proposal_output
 
-
+async def get_first_page_text(filepath:pathlib.Path):
+    reader = PdfReader(str(filepath))
+    if len(reader.pages) > 0:
+        first_page = reader.pages[1]
+        return first_page.extract_text()
+    else:
+        return ""
 async def main():
     filepath = pathlib.Path("/Users/peelsannaw/Desktop/提交版本.pdf")
-    
     res = await get_pdf_output(filepath)
-    print(res)
-    
 
+    with open("res.txt", "w") as f:
+        f.write(res)
+    
+    
 if __name__ == "__main__":
     asyncio.run(main())

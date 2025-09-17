@@ -36,16 +36,20 @@ class AgentState(MessagesState):
     """
     # --- 阶段 0 & 1: 初始输入与规划 ---
     filepath: Annotated[str, "The path of the pdf file"] # 整个流程的起点，由用户输入的初始研究主题或问题。
-    research_topic: Annotated[str, "The initial user input or research topic"] # 整个流程的起点，由用户输入的初始研究主题或问题。
+    research_topic: Annotated[List[str], "The initial user input or research topic"] # 整个流程的起点，由用户输入的初始研究主题或问题。
     intention_decision: Annotated[
         str, "Decision from the intention node, e.g., 'output' or 'structure'"
     ] # 意图识别节点的输出，决定是直接输出还是进入复杂分析流程。
     research_structure: Annotated[
         str, "The structured outline of the research from the structure_node"
     ] # 结构规划节点生成的分析大纲。
-    execution_plan: Annotated[
-        List[str], "A detailed step-by-step plan from the planning_node"
-    ] # 规划节点生成的详细执行计划。
+    research_person_info: Annotated[str,"The person info of the research from the structure_node"]
+    research_basic_info:Annotated[str,"The basic info of the research from the structure_node"]
+    research_project_team_info: Annotated[str,"The project team info of the research from the structure_node"]
+    research_project_apply_info: Annotated[str,"The project apply info of the research from the structure_node"]
+    research_report_body_summary: Annotated[str,"The report body summary of the research from the structure_node"]
+    
+    weight_distribution: Annotated[Dict[str,float],"The weight distribution about nodes"]
 
     # --- 阶段 2: 信息收集 ---
     # 每个字段都存储了对应分析节点产出的报告或关键信息。
@@ -59,12 +63,13 @@ class AgentState(MessagesState):
     # --- 阶段 2: 辩论 ---
     # 这个字段结构比较复杂，用于存储所有并行辩论的结果。
     current_discipline: Annotated[
-        Optional[str], "The discipline currently being debated"
+        Optional[tuple], "The discipline currently being debated"
     ] # 一个临时状态，用于在循环中告知辩论子图当前正在处理哪个学科。
+    
     debate_results: Annotated[
-        List[Dict[str, Dict[str, DebateState]]],
-        "A list containing results for each discipline's debates (feasibility and innovation)"
-    ] # 存储所有辩论的最终结果。结构为：[{学科A: {"可行性": DebateState, "创新性": DebateState}}, {学科B: ...}]
+        Dict[str, Dict[str, DebateState]],
+        "A dict containing results for each discipline's debates (feasibility and innovation)"
+    ] # 存储所有辩论的最终结果。结构为：{学科A: {"可行性": DebateState, "创新性": DebateState}}, {学科B: ...}
 
     # --- 阶段 3: 综合、反思与人机交互 ---
     final_analysis_summary: Annotated[

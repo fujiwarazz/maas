@@ -114,6 +114,9 @@ class GraphSetup:
         generator_node = create_generator_agent(self.deep_think_llm)
         
         
+        
+        
+    
         workflow = StateGraph(AgentState)
         ## stage 1 nodes
         workflow.add_node("intention_node",intention_node)
@@ -170,7 +173,7 @@ class GraphSetup:
         
         ## edges
         workflow.add_edge(START,"intention_node")
-        workflow.add_conditional_edges("intention_node",should_output,{
+        workflow.add_conditional_edges("intention_node",self.conditional_logic.should_output,{
             "output_node":output_node,
             "structure_node":structure_node
         })
@@ -178,14 +181,14 @@ class GraphSetup:
         workflow.add_edge("output_node",END)
         workflow.add_edge("structure_node","planning_node")
         workflow.add_edge("planning_node","academic_analysis_node")
-        workflow.add_conditional_edges("academic_analysis_node",should_continue_academic_analysis,{
+        workflow.add_conditional_edges("academic_analysis_node",self.conditional_logic.should_continue_academic_analysis,{
             "tools_academic":"academic_tool_exc_node",
             "msg_clear_academic":"academic_msg_clear_node",
             "final_analyst_node":"final_analyst_node"
         }) 
         workflow.add_edge("tools_academic","academic_analysis_node")
         workflow.add_edge("academic_analysis_node","social_analysis_node")
-        workflow.add_conditional_edges("social_analysis_node",should_continue_social_analysis,{
+        workflow.add_conditional_edges("social_analysis_node",self.conditional_logic.should_continue_social_analysis,{
             "tools_social":"social_analysis_tool_exc_node",
             "msg_clear_social":"social_analysis_msg_clear_node",
             "final_analyst_node":"final_analyst_node"
@@ -193,16 +196,16 @@ class GraphSetup:
         workflow.add_edge("tools_social","social_analysis_node")
         workflow.add_edge("social_analysis_node","future_influence_node")
 
-        workflow.add_conditional_edges("future_influence_node",should_continue_future_influence,{
+        workflow.add_conditional_edges("future_influence_node",self.conditional_logic.should_continue_future_influence,{
             "tools_future_influence":"future_influence_tool_exc_node",
             "msg_clear_future_influence":"future_influence_msg_clear_node",
             "final_analyst_node":"final_analyst_node"
-
         })
+        
         workflow.add_edge("tools_future_influence","future_influence_node")
         workflow.add_edge("future_influence_node","interdisciplinary_node")
         
-        workflow.add_conditional_edges("interdisciplinary_node",should_continue_interdisciplinary,{
+        workflow.add_conditional_edges("interdisciplinary_node",self.conditional_logic.should_continue_interdisciplinary,{
             "tools_interdisciplinary":"interdisciplinary_tool_exc_node",
             "msg_clear_interdisciplinary":"interdisciplinary_msg_clear_node",
             "final_analyst_node":"final_analyst_node"
@@ -236,7 +239,7 @@ class GraphSetup:
         feasibility_debate_workflow.add_edge("feasible_judge_node", END)
         compiled_feasibility_debate_graph = feasibility_debate_workflow.compile()
 
-        # 2. 创新性辩论子图
+        # 2. 创新性辩论子图 remove tool
         innovation_debate_workflow = StateGraph(AgentState)
         innovation_debate_workflow.add_node("innovation_good_node", innovation_good_node)
         innovation_debate_workflow.add_node("innovation_good_tool_exc_node", innovation_good_tool_exc_node)
@@ -265,7 +268,7 @@ class GraphSetup:
         # 3. 辩论节点
         async def debate_controller(state: AgentState):
             disciplines = state.get('interdisciplinary_results', [])
-            all_debate_outputs = []
+            all_debate_outputs = {}
             for discipline in disciplines:
                 input_state = state.copy()
                 input_state["messages"] = state["messages"] + [("system", f"Starting debates for discipline: {discipline}")]
@@ -275,7 +278,7 @@ class GraphSetup:
                 f_task = compiled_feasibility_debate_graph.ainvoke(input_state)
                 i_task = compiled_innovation_debate_graph.ainvoke(input_state)
                 results = await asyncio.gather(f_task, i_task)
-                all_debate_outputs.append({discipline: results})
+                all_debate_outputs[discipline]= results
             
             state['debate_results'] = all_debate_outputs
             return state

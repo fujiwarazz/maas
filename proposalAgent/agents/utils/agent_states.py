@@ -63,27 +63,54 @@ class AgentState(MessagesState):
     # --- 阶段 2: 辩论 ---
     # 这个字段结构比较复杂，用于存储所有并行辩论的结果。
     current_discipline: Annotated[
-        Optional[tuple], "The discipline currently being debated"
+        Optional[str], "The discipline currently being debated"
     ] # 一个临时状态，用于在循环中告知辩论子图当前正在处理哪个学科。
     
     debate_results: Annotated[
         Dict[str, Dict[str, DebateState]],
         "A dict containing results for each discipline's debates (feasibility and innovation)"
-    ] # 存储所有辩论的最终结果。结构为：{学科A: {"可行性": DebateState, "创新性": DebateState}}, {学科B: ...}
+    ] # 存储所有辩论的最终结果。结构为：{学科A: {"可行性": DebateState, "创新性": DebateState}}, {学科B: ...}}
 
     # --- 阶段 3: 综合、反思与人机交互 ---
     final_analysis_summary: Annotated[
         str, "A comprehensive summary from the final_analyst_node"
     ] # 最终分析节点整合所有信息后生成的综合分析摘要。
+    
+    # 完备性检查相关
+    completeness_check_result: Annotated[
+        Optional[Dict], "Result from completeness checker with is_complete, is_consistent, recommendation etc."
+    ] # 完备性检查智能体的输出结果，包含完备性、自洽性等评估。
+    is_analysis_complete: Annotated[
+        Optional[bool], "Whether the analysis is complete based on completeness check"
+    ] # 基于完备性检查的分析是否完备的判断。
+    is_analysis_consistent: Annotated[
+        Optional[bool], "Whether the analysis is consistent based on completeness check"
+    ] # 基于完备性检查的分析是否自洽的判断。
+    completeness_recommendation: Annotated[
+        Optional[str], "Recommendation from completeness check: 'complete' or 'need_human_review'"
+    ] # 完备性检查的建议：完成或需要人类审核。
+    
+    # 反思和人类审核
     reflection_decision: Annotated[
-        str, "Decision from reflection, e.g., 'generate' or 'review'"
+        Optional[str], "Decision from reflection, e.g., 'generate' or 'review'"
     ] # 反思节点的输出，决定是直接生成报告还是请求人类审核。
+    skip_human_review: Annotated[
+        Optional[bool], "Whether to skip human review based on completeness check"
+    ] # 是否跳过人类审核的标记，基于完备性检查结果。
     human_feedback: Annotated[
         Optional[str], "Feedback provided by the human reviewer"
     ] # 人类审核者提供的反馈意见，如果流程触发了人工审核，则会填充此字段。
+    
+    # 反馈分析相关
+    feedback_analysis_result: Annotated[
+        Optional[Dict], "Result from feedback analysis with identified issues, missing content, next_step etc."
+    ] # 反馈分析智能体的输出结果，包含问题识别、缺失内容、下一步路径等。
     feedback_routing_decision: Annotated[
-        str, "Decision on where to go after analyzing human feedback"
-    ] # 反馈分析节点的输出，决定下一步应该跳转回哪个节点（如 'redo_academic', 'redo_debate', 'generate'）。
+        Optional[str], "Decision on where to go after analyzing human feedback"
+    ] # 反馈分析节点的输出，决定下一步应该跳转回哪个节点（如 'academic_analysis', 'debate', 'generate'）。
+    feedback_instructions: Annotated[
+        Optional[str], "Specific instructions for the next node based on feedback analysis"
+    ] # 基于反馈分析给下一个节点的具体指导意见。
 
     # --- 最终产出 ---
     final_report: Annotated[Optional[str], "The final generated report"] # 生成器节点产出的最终报告。

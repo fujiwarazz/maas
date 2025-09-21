@@ -6,10 +6,30 @@ from langgraph.prebuilt.chat_agent_executor import F
 from langgraph.types import Send
 from proposalAgent.agents import *
 from proposalAgent.agents.utils.agent_states import AgentState
-from proposalAgent.agents.utils.agent_utils import Toolkit,create_msg_delete
-from proposalAgent.graphs import workflow
+from proposalAgent.agents.utils.agent_utils import Toolkit
+# from proposalAgent.graphs import workflow
+from proposalAgent.agents.stage1.intention import create_intention_agent
+from proposalAgent.agents.stage1.output import create_output_node
+from proposalAgent.agents.stage1.structure import create_structure_node
+from proposalAgent.agents.stage1.schedule import create_schedule_agent
+
+from proposalAgent.agents.stage2.academic import create_academic_agent
+# from proposalAgent.agents.stage2.social import create_social_analysis_agent
+from proposalAgent.agents.stage2.future_influence import create_future_influence_agent  
+from proposalAgent.agents.stage2.interdis import create_interdis_agent
+
+from proposalAgent.agents.stage2.debate.feasible.feasible_bad import create_feasible_bad_agent
+from proposalAgent.agents.stage2.debate.feasible.feasible_good import create_feasible_good_agent
+from proposalAgent.agents.stage2.debate.feasible.feasible_manager import create_feasible_manager
+from proposalAgent.agents.stage2.debate.innovation.innovation_bad import create_innovation_bad_agent
+from proposalAgent.agents.stage2.debate.innovation.innovation_good import create_innovation_good_agent
+from proposalAgent.agents.stage2.debate.innovation.innovation_manager import create_innovation_manager
+
 from proposalAgent.agents.stage3.feedback_analysis_agent import create_feedback_analysis_agent
 from proposalAgent.agents.stage3.reflection_agent import create_reflection_agent
+from proposalAgent.agents.stage3.final_analysis import create_final_analyst_agent
+from proposalAgent.agents.stage3.completeness_checker import create_completeness_checker_agent
+from proposalAgent.agents.stage3.generator import create_generator_agent
 from tools import *
 from .conditional_logic import ConditionalLogic
 import asyncio
@@ -58,65 +78,78 @@ class GraphSetup:
         这个方法将所有组件（智能体、工具、逻辑）整合到一个StateGraph中，定义了它们的交互规则。
         """
         # stage 0: normal for intention recognization
-        intention_node = create_intention_agent(self.quick_thinking_llm,tools = self.toolkit.get_tools['intention'])
-        output_node = create_output_agent(self.quick_thinking_llm,tools = self.toolkit.get_tools['output'])
+        intention_node = create_intention_agent(self.quick_thinking_llm)
+        output_node = create_output_node()
         
         
         # stage 1
-        structure_node = create_structure_node(self.structure_llm,tools=self.toolkit.get_tools['output'])
-        planning_node = create_planning_agent(self.deep_think_llm,self.planning_memory)
+        structure_node = create_structure_node()
+        planning_node = create_schedule_agent(self.deep_think_llm)
 
         # stage 2
         ## 信息收集部分
-        academic_analysis_node = create_academic_analysis_agent(self.quick_thinking_llm,self.academic_analysis_memory,tools=self.toolkit.get_tools['academic'])
+        academic_analysis_node = create_academic_agent(self.quick_thinking_llm, toolkit=self.toolkit, memory=self.academic_memory)
         academic_tool_exc_node = self.tool_nodes['academic']
+        
+        # 使用一个简单的消息清除函数替代
+        def create_msg_delete():
+            def msg_delete(state):
+                return {"messages": []}
+            return msg_delete
+        
         academic_msg_clear_node = create_msg_delete()
         
-        social_analysis_node = create_social_analysis_agent(self.quick_thinking_llm,self.social_analysis_memory,tools=self.toolkit.get_tools['social'])
+        # social_analysis_node = create_social_analysis_agent(self.quick_thinking_llm, self.toolkit, self.impact_memory)  # 暂时使用impact_memory
+        def placeholder_social_analysis_node(state):
+            return {"messages": [], "social_analysis_report": "社会分析模块暂未实现"}
+        social_analysis_node = placeholder_social_analysis_node
+        
         social_tool_exc_node = self.tool_nodes['social']
         social_msg_clear_node = create_msg_delete()
         
-        future_influence_node = create_future_influence_agent(self.deep_think_llm,self.future_influence_memory,self.toolkit.get_tools['influence'])
+        future_influence_node = create_future_influence_agent(self.deep_think_llm, self.toolkit, self.future_influence_memory)
         future_influence_tool_exc_node = self.tool_nodes['influence']
         future_influence_msg_clear_node = create_msg_delete()
         
-        interdisciplinary_node = create_interdisciplinary_agent(self.deep_think_llm,self.interdisciplinary_memory,self.toolkit.get_tools['interdisciplinary'])
+        interdisciplinary_node = create_interdis_agent(self.deep_think_llm, self.toolkit)
         interdisciplinary_tool_exc_node = self.tool_nodes['interdisciplinary']
         interdisciplinary_msg_clear_node = create_msg_delete()
         
-        ## 辩论部分
-        # 可行性辩论
-        feasible_good_node = create_feasible_good_agent(self.deep_think_llm)
+        # ## 辩论部分
+        # # 可行性辩论
+        feasible_good_node = create_feasible_good_agent(self.deep_think_llm, self.toolkit, self.feasibility_memory)
         feasible_good_tool_exc_node = self.tool_nodes['feasibility']
         feasible_good_msg_clear_node = create_msg_delete()
         
-        feasible_bad_node = create_feasible_bad_agent(self.deep_think_llm,self)
+        feasible_bad_node = create_feasible_bad_agent(self.deep_think_llm, self.toolkit, self.feasibility_memory)
         feasible_bad_tool_exc_node = self.tool_nodes['feasibility']
         feasible_bad_msg_clear_node = create_msg_delete()
         # 可行性总结
-        feasible_judge_node = create_feasibility_judge_agent(self.deep_think_llm,self.feasibility_memory)
+        feasible_judge_node = create_feasible_manager(self.deep_think_llm, self.feasibility_memory)
         
         
         # 创新性辩论
-        innovation_good_node = create_innovation_good_agent(self.deep_think_llm)
+        innovation_good_node = create_innovation_good_agent(self.deep_think_llm, self.toolkit, self.innovation_memory)
         innovation_good_tool_exc_node = self.tool_nodes['innovation']
         innovation_good_msg_clear_node = create_msg_delete()
         
-        innovation_bad_node = create_innovation_bad_agent(self.deep_think_llm)
+        innovation_bad_node = create_innovation_bad_agent(self.deep_think_llm, self.toolkit, self.innovation_memory)
         innovation_bad_tool_exc_node = self.tool_nodes['innovation']
         innovation_bad_msg_clear_node = create_msg_delete()
         # 创新性总结
-        innovation_judge_node = create_innovation_judge_agent(self.deep_think_llm,self.innovation_memory)
+        innovation_judge_node = create_innovation_manager(self.deep_think_llm, self.innovation_memory)
         
         
         ## stage 3
         final_analyst_node = create_final_analyst_agent(self.deep_think_llm)
+        completeness_checker_node = create_completeness_checker_agent(self.deep_think_llm)
         generator_node = create_generator_agent(self.deep_think_llm)
         
         
         
         
     
+        # 创建StateGraph实例
         workflow = StateGraph(AgentState)
         ## stage 1 nodes
         workflow.add_node("intention_node",intention_node)
@@ -146,8 +179,8 @@ class GraphSetup:
         workflow.add_node("interdisciplinary_tool_exc_node",interdisciplinary_tool_exc_node)
         workflow.add_node("interdisciplinary_msg_clear_node",interdisciplinary_msg_clear_node)
         
-        ### 辩论节点
-        ### 可行性辩论节点
+        ## 辩论节点
+        ## 可行性辩论节点
         workflow.add_node("feasible_good_node",feasible_good_node)
         workflow.add_node("feasible_good_tool_exc_node",feasible_good_tool_exc_node)
         workflow.add_node("feasible_good_msg_clear_node",feasible_good_msg_clear_node)
@@ -169,13 +202,14 @@ class GraphSetup:
         
         ## stage 3 nodes
         workflow.add_node("final_analyst_node",final_analyst_node)
+        workflow.add_node("completeness_checker_node",completeness_checker_node)
         workflow.add_node("generator_node",generator_node)
         
         ## edges
         workflow.add_edge(START,"intention_node")
         workflow.add_conditional_edges("intention_node",self.conditional_logic.should_output,{
-            "output_node":output_node,
-            "structure_node":structure_node
+            "output_node":"output_node",
+            "structure_node":"structure_node"
         })
         
         workflow.add_edge("output_node",END)
@@ -271,7 +305,8 @@ class GraphSetup:
             all_debate_outputs = {}
             for discipline in disciplines:
                 input_state = state.copy()
-                input_state["messages"] = state["messages"] + [("system", f"Starting debates for discipline: {discipline}")]
+                from langchain_core.messages import SystemMessage
+                input_state["messages"] = state["messages"] + [SystemMessage(content=f"Starting debates for discipline: {discipline}")]
                 input_state["current_discipline"] = discipline
 
                 # 并行运行可行性和创新性辩论
@@ -287,6 +322,28 @@ class GraphSetup:
         workflow.add_edge("interdisciplinary_node", "debate_controller")
         workflow.add_edge("debate_controller", "final_analyst_node")
         
+        # 路由函数：根据完备性检查和人类反馈情况决定下一步
+        def _route_after_human_review(state: AgentState) -> str:
+            """
+            根据完备性检查结果和是否有人类反馈来决定路由
+            """
+            # 检查是否跳过人类审核
+            skip_human_review = state.get("skip_human_review", False)
+            if skip_human_review:
+                print("完备性检查通过，直接生成报告")
+                return "generate"
+            
+            # 检查是否有人类反馈
+            human_feedback = state.get("human_feedback")
+            if human_feedback and human_feedback.strip():
+                print("检测到人类反馈，进行反馈分析")
+                return "feedback_analysis"
+            else:
+                print("没有人类反馈，可能需要等待用户输入")
+                # 这种情况下图形应该已经中断等待输入
+                # 如果到这里说明有问题，默认分析反馈
+                return "feedback_analysis"
+        
 
         # stage 3
         """
@@ -295,35 +352,52 @@ class GraphSetup:
         2、将分析结果使用human in the loop引入人类评审（不一定要，如果final analyst觉得置信度高的话可以直接走到生成最终报表，但是如何评价置信度我还没想好），
         3、引入评审之后如果人类评审没问题就生成，有问题的话就根据人类的评价，分析出来问题出现在哪里，更新他的记忆，并且重新执行那一部分节点，然后再输出报表。
         """
-        reflection_node = create_reflection_agent(self.deep_think_llm)
+    #    reflection_node = create_reflection_agent(self.deep_think_llm)
         feedback_analysis_node = create_feedback_analysis_agent(self.deep_think_llm)
 
-        # The human review node is a placeholder to allow the graph to interrupt for human input.
+        # Enhanced human review node that includes completeness checking
         def human_review_node(state: AgentState) -> AgentState:
-            # The graph will be configured to interrupt before this node.
-            # The application running the graph will collect human feedback
-            # and resume execution.
-            return state
+            """
+            增强的人类审核节点，首先进行完备性检查，然后根据结果决定是否需要人类输入。
+            如果完备性检查通过，将跳过人类审核直接生成报告。
+            如果未通过，则等待人类反馈。
+            """
+            # 首先进行完备性检查
+            print("=== 执行完备性检查 ===")
+            state = completeness_checker_node(state)
+            
+            # 检查完备性结果
+            completeness_recommendation = state.get("completeness_recommendation", "need_human_review")
+            
+            if completeness_recommendation == "complete":
+                print("完备性检查通过，将直接生成报告")
+                # 设置跳过人类审核的标记
+                state["skip_human_review"] = True
+                return state
+            else:
+                print("完备性检查未通过，需要人类审核")
+                # 需要人类审核 - 图形将在此中断等待人类输入
+                state["skip_human_review"] = False
+                return state
 
         # 2. Add the new nodes to the workflow
-        workflow.add_node("reflection_node", reflection_node)
+     #  workflow.add_node("reflection_node", reflection_node)
         workflow.add_node("human_review_node", human_review_node)
         workflow.add_node("feedback_analysis_node", feedback_analysis_node)
 
 
-        workflow.add_edge("final_analyst_node", "reflection_node")
+        # 从最终分析到人类审核节点（包含完备性检查）
+        workflow.add_edge("final_analyst_node", "human_review_node")
 
+        # 根据完备性检查和人类反馈情况进行条件路由
         workflow.add_conditional_edges(
-            "reflection_node",
-            self.conditional_logic.should_request_human_review,
+            "human_review_node",
+            _route_after_human_review,
             {
-                "generate": "generator_node",
-                "review": "human_review_node"
+                "generate": "generator_node",  # 完备性检查通过，直接生成
+                "feedback_analysis": "feedback_analysis_node"  # 需要分析人类反馈
             }
         )
-
-        # 人类评审完直接分析
-        workflow.add_edge("human_review_node", "feedback_analysis_node")
 
         
         # 这里是直接跳转，对应部分节点完成之后能重新走到part3的部分
@@ -344,6 +418,27 @@ class GraphSetup:
         workflow.add_edge("generator_node", END)
 
 
-        # To enable the human-in-the-loop, you need to compile the graph
-        # with an instruction to interrupt before the human_review_node.
+        # 创建一个条件中断函数
+        def should_interrupt_for_human_review(state: AgentState) -> bool:
+            """
+            只有当完备性检查未通过且需要人类审核时才中断
+            """
+            completeness_recommendation = state.get("completeness_recommendation", "need_human_review")
+            skip_human_review = state.get("skip_human_review", False)
+            
+            # 如果完备性检查通过，不需要中断
+            if skip_human_review or completeness_recommendation == "complete":
+                return False
+            
+            # 如果已经有人类反馈，不需要再次中断
+            human_feedback = state.get("human_feedback")
+            if human_feedback and human_feedback.strip():
+                return False
+                
+            # 需要人类审核
+            return True
+        
+        # 编译图形，设置条件中断
+        # 注意：langgraph的interrupt_before不支持条件中断，
+        # 我们改为在human_review_node内部通过检查来决定是否需要等待输入
         return workflow.compile(interrupt_before=["human_review_node"])

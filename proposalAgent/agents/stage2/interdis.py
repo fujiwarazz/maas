@@ -64,7 +64,7 @@ def create_interdis_agent(llm, toolkit):
 
 
             return {
-                "messages": result,
+                "messages": [result],
                 "interdisciplinary_results": interdis_report,
             }
             

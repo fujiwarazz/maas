@@ -108,8 +108,8 @@ def getNewsData(query, start_date, end_date):
     return news_results
 
 if __name__ == "__main__":
-    query = "duckduckgo"
-    start_date = "2023-01-01"
-    end_date = "2023-11-05"
+    query = "deepseek r1"
+    start_date = "2025-09-01"
+    end_date = "2025-09-02"
     news_results = getNewsData(query, start_date, end_date)
     print(news_results)

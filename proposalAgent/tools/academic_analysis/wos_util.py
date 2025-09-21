@@ -412,6 +412,7 @@ class CitationSummaryInput(BaseModel):
     graph: Dict[str, Any] = Field(..., description="wos_expanded_citation_fanout 的返回对象")
 
 
+# todo： need to be modified
 @tool
 def wos_citation_influence_summary(input: CitationSummaryInput) -> Dict[str, Any]:
     """对引用网络做轻量级影响力摘要：期刊、年份、学科的分布。

@@ -143,13 +143,44 @@ class ConditionalLogic:
             # Fallback in case of parsing errors
             return "generate"
 
+    def should_request_human_review_based_on_completeness(self, state: AgentState) -> str:
+        """
+        根据完备性检查结果决定是否需要人类审核
+        """
+        print("--- 根据完备性检查决定是否需要人类审核 ---")
+        
+        try:
+            completeness_result = state.get("completeness_check_result", {})
+            recommendation = completeness_result.get("recommendation", "need_human_review")
+            
+            print(f">>> 完备性检查建议: {recommendation}")
+            
+            if recommendation == "complete":
+                # 分析完备且自洽，直接生成报告
+                return "generate"
+            else:
+                # 需要人类审核
+                return "review"
+                
+        except (KeyError, AttributeError) as e:
+            print(f"读取完备性检查结果时出错: {e}. 默认需要人类审核.")
+            return "review"
+
     def route_after_feedback(self, state: AgentState) -> str:
         """
         Routes the workflow to the appropriate node based on the feedback analysis agent's output.
         """
         print("--- Routing after human feedback ---")
-        last_message = state["messages"][-1]
+        
         try:
+            # 优先从state中获取反馈路由决策
+            feedback_routing_decision = state.get("feedback_routing_decision")
+            if feedback_routing_decision:
+                print(f">>> 从状态中获取反馈分析路由决策: {feedback_routing_decision}")
+                return self._validate_route(feedback_routing_decision)
+            
+            # 备用方案：从最后一条消息解析
+            last_message = state["messages"][-1]
             content = getattr(last_message, "content", "")
             feedback_analysis_output = {}
             if isinstance(content, dict):
@@ -159,24 +190,29 @@ class ConditionalLogic:
             next_step = feedback_analysis_output.get("next_step")
             print(f">>> Feedback analysis recommends routing to: {next_step}")
             
-            # Validate that the next_step is a valid node name before returning
-            valid_routes = [
-                "academic_analysis",
-                "social_analysis",
-                "future_influence",
-                "interdisciplinary",
-                "debate",
-                "generate",
-            ]
-            if next_step in valid_routes:
-                return next_step
-            else:
-                print(f"Invalid route '{next_step}' recommended. Defaulting to generation.")
-                return "generate"
+            return self._validate_route(next_step)
 
         except (json.JSONDecodeError, IndexError, KeyError) as e:
             print(f"Error parsing feedback analysis output: {e}. Defaulting to generation.")
             # Fallback in case of parsing errors
+            return "generate"
+    
+    def _validate_route(self, next_step: str) -> str:
+        """
+        验证路由目标是否有效
+        """
+        valid_routes = [
+            "academic_analysis",
+            "social_analysis", 
+            "future_influence",
+            "interdisciplinary",
+            "debate",
+            "generate",
+        ]
+        if next_step in valid_routes:
+            return next_step
+        else:
+            print(f"Invalid route '{next_step}' recommended. Defaulting to generation.")
             return "generate"
 
 

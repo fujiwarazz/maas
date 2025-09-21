@@ -66,7 +66,7 @@ def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
 
             ### 输出要求：
             - 以中文输出，条理清晰，分点阐述。
-            - 在开始之前，如果有反方观点，你应该先反对对方的观点，并且说明理由
+            - 在开始之前，如果有反方观点，你应该先反对对方的观点，并且说明理由,如果没有反方观点，那么就跳过这一步
             - 每个论点应简洁明了，避免冗长。
             - 论点应具体且有说服力，避免泛泛而谈。
             - 不要包含反对意见或不确定的内容。
@@ -95,23 +95,29 @@ def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
             argument = f"可行性正方观点: {feasible_report}"
 
         
+            # 正确地添加新的论点到历史记录
+            new_full_history = full_history + [argument]
+            new_good_history = feasbile_good_his + [argument]
+            
             new_feasible_good_debate_state = {
-                "full_history":full_history.append(argument),
-                "good_agent_history":feasbile_good_his.append(argument),
-                "bad_agent_history":feasbile_bad_his,
-                "debate_rounds":current_debate.get("debate_rounds",1),
-                "judge_summary":"",
-                
-                
-            }
-            new_debate_result= {
-                "可行性":new_feasible_good_debate_state,
-                "创新性": state.get("debate_results", {}).get(_disc_name, {}).get("创新性", {})
+                "full_history": new_full_history,
+                "good_agent_history": new_good_history,
+                "bad_agent_history": feasbile_bad_his,
+                "debate_rounds": current_debate.get("debate_rounds", 1),
+                "judge_summary": "",
             }
             
-            origin_debate_results = state.get("debate_results",{})
-            new_debate_results = origin_debate_results
-            new_debate_result[_disc_name]=new_debate_result
+            # 获取当前学科的辩论结果，保持创新性辩论结果不变
+            current_disc_debates = state.get("debate_results", {}).get(_disc_name, {})
+            new_debate_result = {
+                "可行性": new_feasible_good_debate_state,
+                "创新性": current_disc_debates.get("创新性", {})
+            }
+            
+            # 更新辩论结果
+            origin_debate_results = state.get("debate_results", {})
+            new_debate_results = dict(origin_debate_results)  # 创建副本
+            new_debate_results[_disc_name] = new_debate_result
             
             return {"debate_results": new_debate_results}
 

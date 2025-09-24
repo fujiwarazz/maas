@@ -47,7 +47,8 @@ def create_innovation_bad_agent(llm, toolkit,memory:EmbeddingMemory):
         
         
         curr_situation = f"{research_info}\n\n{academic_report}\n\n{research_project_apply_info}\n\n{research_body}"
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = []
+        #past_memories = memory.get_memories(curr_situation, n_matches=2)
         
         role_description = generate_discipline_agent_prompt(_disc_code,_disc_name)
 

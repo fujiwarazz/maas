@@ -90,14 +90,14 @@ async def create_async_stream_generator(user_question: str) -> AsyncGenerator[st
 
 
 
-def create_output_node():
+def create_output_node(llm):
     def get_output_node(state):
         
-        llm = ChatOpenAI(model="qwen-plus",
-                 base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                 api_key=SecretStr("sk-0e349a8dc24443988825b69a56d2b868"),
-                 streaming=True  # 启用流式输出
-                 )
+        # llm = ChatOpenAI(model="qwen-plus",
+        #          base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        #          api_key=SecretStr("sk-0e349a8dc24443988825b69a56d2b868"),
+        #          streaming=True  # 启用流式输出
+        #          )
         prompt = """
             ### 角色描述
             你是一个专业的对话机器人，能够很好的回复用户的信息。
@@ -110,31 +110,24 @@ def create_output_node():
         user_question = get_user_query(state)
         prompt = prompt.format(user_question=user_question)
         
-        # 流式输出
-        print("AI回复：", end='', flush=True)
-        full_response = ""
-        for chunk in llm.stream(prompt):
-            if hasattr(chunk, 'content') and chunk.content:
-                content = chunk.content
-                if isinstance(content, str):
-                    print(content, end='', flush=True)
-                    full_response += content
-                elif isinstance(content, list):
-                    for item in content:
-                        if isinstance(item, str):
-                            print(item, end='', flush=True)
-                            full_response += item
-        print()  #
+        result = llm.invoke(prompt)
+
         
-        # from langchain_core.messages import AIMessage
-        # result = AIMessage(content=full_response)
+        current_messages = state.get("messages", [])
+        new_messages = current_messages + [result.content]
+        
         return {
-            "messages": [full_response]
+            "messages": new_messages
         }
     node = get_output_node
     return node
 
 if __name__ == "__main__":
-    output_agent = create_output_node()
-    result = output_agent({"messages": [{"role":"user","content":"你好"}]})
+    llm = ChatOpenAI(
+        model="qwen-plus",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key=SecretStr("sk-0e349a8dc24443988825b69a56d2b868")
+    )
+    output_agent = create_output_node(llm)
+    result = output_agent({"messages": [("user","你好")]})
     print(result)

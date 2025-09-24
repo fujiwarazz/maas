@@ -78,7 +78,6 @@ def create_completeness_checker_agent(llm: ChatOpenAI):
         """
         完备性检查节点的执行函数
         """
-        # 准备输入数据
         input_data = {
             "research_topic": state.get("research_topic", "未提供"),
             "research_structure": state.get("research_structure", "未提供"),
@@ -95,34 +94,29 @@ def create_completeness_checker_agent(llm: ChatOpenAI):
             "final_analysis_summary": state.get("final_analysis_summary", "未完成最终分析")
         }
         
-        # 调用LLM进行评估
         chain = prompt | llm
         result = chain.invoke(input_data)
         
-        # 解析结果
         try:
             content = result.content if hasattr(result, 'content') else str(result)
             completeness_result = json.loads(content)
             
-            # 更新状态
             state["completeness_check_result"] = completeness_result
             state["is_analysis_complete"] = completeness_result.get("is_complete", False)
             state["is_analysis_consistent"] = completeness_result.get("is_consistent", False)
             state["completeness_recommendation"] = completeness_result.get("recommendation", "need_human_review")
             
-            # 添加检查消息到消息历史
             check_summary = f"""完备性检查完成：
-完备性：{'通过' if completeness_result.get('is_complete') else '未通过'}
-自洽性：{'通过' if completeness_result.get('is_consistent') else '未通过'}
-质量评分：{completeness_result.get('overall_quality', 'N/A')}/5
-建议：{completeness_result.get('recommendation', 'need_human_review')}
-原因：{completeness_result.get('reason', '无详细说明')}"""
+                        完备性：{'通过' if completeness_result.get('is_complete') else '未通过'}
+                        自洽性：{'通过' if completeness_result.get('is_consistent') else '未通过'}
+                        质量评分：{completeness_result.get('overall_quality', 'N/A')}/5
+                        建议：{completeness_result.get('recommendation', 'need_human_review')}
+                        原因：{completeness_result.get('reason', '无详细说明')}"""
             
             state["messages"].append(AIMessage(content=check_summary))
             
         except (json.JSONDecodeError, KeyError) as e:
             print(f"解析完备性检查结果时出错: {e}")
-            # 默认需要人类审核
             state["completeness_check_result"] = {
                 "is_complete": False,
                 "is_consistent": False,

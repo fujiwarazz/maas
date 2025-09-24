@@ -7,14 +7,15 @@ from datetime import datetime
 from proposalAgent.agents.utils.agent_states import AgentState,DebateState
 from proposalAgent.agents.utils.memory import EmbeddingMemory
 from proposalAgent.prompts.discipline_feasible_agent_template import generate_discipline_agent_prompt
+from proposalAgent.utils.logger import get_logger
+
+logger = get_logger("feasible_good_agent")
+
 def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
     """
     创建可行性正方辩论agent，用于支持项目的可行性
     
-    Args:
-        llm: 语言模型实例
-        toolkit: 工具包（暂未使用，保留接口兼容性）
-    
+   
     Returns:
         feasible_good_agent: 可行性正方辩论agent函数
     """
@@ -47,9 +48,13 @@ def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
         
         
         curr_situation = f"{research_info}\n\n{academic_report}\n\n{research_project_apply_info}\n\n{research_body}"
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
-        
-        role_description = generate_discipline_agent_prompt(_disc_code,_disc_name)
+       # past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = []
+        if _disc_code and _disc_name:
+            role_description = generate_discipline_agent_prompt(_disc_code,_disc_name)
+        else:
+            role_description = ""
+            logger.error("缺少学科信息分类")
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
@@ -63,6 +68,7 @@ def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
             {role_description}
 
             **同时你是一个项目可行性论证专家**,请根据给定的研究基础信息与正文摘要，提出**支持**该项目可行性的**正方论点**，并且对反方观点进行驳斥。
+            **你必须使用的是你所属领域的专家视角，不要使用其他领域的视角。**
 
             ### 输出要求：
             - 以中文输出，条理清晰，分点阐述。
@@ -93,9 +99,7 @@ def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
             
         
             argument = f"可行性正方观点: {feasible_report}"
-
         
-            # 正确地添加新的论点到历史记录
             new_full_history = full_history + [argument]
             new_good_history = feasbile_good_his + [argument]
             
@@ -107,16 +111,14 @@ def create_feasible_good_agent(llm, toolkit,memory:EmbeddingMemory):
                 "judge_summary": "",
             }
             
-            # 获取当前学科的辩论结果，保持创新性辩论结果不变
             current_disc_debates = state.get("debate_results", {}).get(_disc_name, {})
             new_debate_result = {
                 "可行性": new_feasible_good_debate_state,
                 "创新性": current_disc_debates.get("创新性", {})
             }
             
-            # 更新辩论结果
             origin_debate_results = state.get("debate_results", {})
-            new_debate_results = dict(origin_debate_results)  # 创建副本
+            new_debate_results = dict(origin_debate_results)  
             new_debate_results[_disc_name] = new_debate_result
             
             return {"debate_results": new_debate_results}

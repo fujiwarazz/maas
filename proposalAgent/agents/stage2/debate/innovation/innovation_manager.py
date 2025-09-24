@@ -36,7 +36,8 @@ def create_innovation_manager(llm, memory: EmbeddingMemory):
 
         # 组织当前情境与记忆
         curr_situation = f"{research_info}\n\n{academic_report}\n\n{research_project_apply_info}\n\n{research_body}"
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        #past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = []
         past_memory_str = ""
         for rec in past_memories:
             past_memory_str += rec.get("recommendation", "") + "\n\n"

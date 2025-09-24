@@ -13,29 +13,36 @@ def create_intention_agent(llm):
             "申请书/论文评估（如：涉及对学术申请书、科研论文、项目计划书等内容的结构、创新性、可行性、学术价值等方面的分析与评估）"
         ]
         intentions_flag = [
-            "structure",
-            "output"
+            "output",
+            "structure"
         ]
         
         
         system_prompt = """
         你是一个智能意图识别助手，负责分析用户的输入内容，并判断其意图属于以下哪一类：
-        {intentions}
-        请根据用户输入内容，准确判断其意图类型,
-        他们对应的返回标识为：
-        {intentions_flag}
-        请根据用户输入内容，准确判断其意图类型,并返回对应的返回标识,
-        用户输入:{user_question}
+        
+        1. 通用模型能力（如：日常问答、常规推理、代码生成、知识检索等，模型本身即可胜任的任务）-> 返回：output
+        2. 申请书/论文评估（如：涉及对学术申请书、科研论文、项目计划书等内容的结构、创新性、可行性、学术价值等方面的分析与评估）-> 返回：structure
+        
+        用户输入: {user_question}
+        
+        请根据用户输入内容，准确判断其意图类型，并只返回对应的标识（output 或 structure）。
         """
        
         
         user_question = get_user_query(state)
-        system_prompt = system_prompt.format(user_question=user_question,intentions="\n".join(intentions),intentions_flag="\n".join(intentions_flag))
+        system_prompt = system_prompt.format(user_question=user_question)
         result = llm.invoke(system_prompt)
 
+        should_output = False
+        if result.content and "output" in result.content.lower():
+            should_output = True
+        
+        print(f"intention_decision: {result.content}")
         return {
             "messages": [result],
-            "intention_decision":result.content
+            "intention_decision": result.content,
+            "should_output": should_output
         }
 
     return intention_agent

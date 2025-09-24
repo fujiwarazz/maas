@@ -47,7 +47,7 @@ class ConditionalLogic:
             return tools_key
         return msg_clear_key
 
-    def _route_debate(self, state: AgentState) -> str | None:
+    def _route_debate(self, state: AgentState):
         last = self._last_message(state)
         if last is None:
             return None
@@ -63,22 +63,34 @@ class ConditionalLogic:
         """Decide whether to go directly to output or continue to structure.
         返回值需在 setup 中的映射键内："output_node" 或 "structure_node"。
         规则：
-        - 若 state["should_output"] 为真或消息包含明显终止信号，则走 "output_node"
-        - 否则默认走 "structure_node"
+        - 若 intention_decision 为 "output"，则走 "output_node"
+        - 若 intention_decision 为 "structure"，则走 "structure_node"
+        - 其他情况默认走 "structure_node"
         """
+        # 首先检查意图识别结果
+        intention = state.get("intention_decision", "").lower().strip()
+        if "output" in intention:
+            return "output_node"
+        elif "structure" in intention:
+            return "structure_node"
+            
+        # 备用逻辑：检查should_output标志
+        if isinstance(state, dict) and state.get("should_output") is True:
+            return "output_node"
+            
+        # 备用逻辑：检查消息内容
         try:
             last = state["messages"][-1]
             content = getattr(last, "content", "") or ""
+            tokens = ["<FINALIZE>", "FINALIZE", "DONE", "完成", "直接输出", "生成结果", "生成报告"]
+            cu = content.upper()
+            if any(t in cu for t in tokens):
+                return "output_node"
         except Exception:
-            content = ""
-        should = False
-        if isinstance(state, dict) and state.get("should_output") is True:
-            should = True
-        tokens = ["<FINALIZE>", "FINALIZE", "DONE", "完成", "直接输出", "生成结果", "生成报告"]
-        cu = content.upper()
-        if any(t in cu for t in tokens):
-            should = True
-        return "output_node" if should else "structure_node"
+            pass
+            
+        # 默认走结构化分析
+        return "structure_node"
     
     
     # def route_after_planning(self,state: AgentState) -> str | list[str]:

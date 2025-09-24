@@ -13,7 +13,7 @@ from proposalAgent.agents.utils.memory import EmbeddingMemory
 # 导入未来影响力分析工具
 from proposalAgent.tools.baidu_util import baidu_search_with_content
 
-def create_future_influence_agent(llm, toolkit, memory: Optional[EmbeddingMemory]):
+def create_future_influence_agent(llm, toolkit):
     """
     创建未来影响力分析agent，用于评估项目的未来发展潜力和影响力
     
@@ -83,22 +83,6 @@ def create_future_influence_agent(llm, toolkit, memory: Optional[EmbeddingMemory
                 print(f"future_influence_report: {future_influence_report}")
             else:
                 future_influence_report = "正在使用未来影响力分析工具进行深度评估..."
-
-            # # 存储分析结果到记忆中
-            # if memory and future_influence_report and len(future_influence_report) > 50:
-            #     try:
-            #         memory_content = {
-            #             "type": "future_influence_analysis",
-            #             "timestamp": datetime.now().isoformat(),
-            #             "project_summary": project_info[:200] + "..." if len(project_info) > 200 else project_info,
-            #             "analysis_result": future_influence_report[:500] + "..." if len(future_influence_report) > 500 else future_influence_report
-            #         }
-            #         memory.add_memory(
-            #             content=json.dumps(memory_content, ensure_ascii=False),
-            #             metadata={"agent": "future_influence", "timestamp": datetime.now().isoformat()}
-            #         )
-            #     except Exception as e:
-            #         print(f"记忆存储失败: {e}")
 
             return {
                 "messages": [result],

@@ -8,12 +8,22 @@ from datetime import date, timedelta, datetime
 import functools
 import pandas as pd
 import os
-# from dateutil.relativedelta import relativedelta
 from langchain_openai import ChatOpenAI
-# import proposalAgent.tools.tool_interface as interface
 from proposalAgent.model_config import TONGYI_CONFIG
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
+
+def create_msg_delete():
+    def delete_messages(state):
+        messages = state["messages"]
+        
+        removal_operations = [RemoveMessage(id=m.id) for m in messages]
+        
+        placeholder = HumanMessage(content="Continue")
+        
+        return {"messages": removal_operations + [placeholder]}
+    
+    return delete_messages
 
 class Toolkit:
     

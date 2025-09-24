@@ -7,9 +7,27 @@ class EmbeddingMemory:
     def __init__(self, name, config):
         """Initialize the EmbeddingMemory with a ChromaDB collection"""
         self.embedding = "text-embedding-v3"
-        self.client = OpenAI(base_url=config["backend_url"],api_key=config["api_key"])
-        self.chroma_client = chromadb.Client(Settings(allow_reset=True))
-        self.situation_collection = self.chroma_client.create_collection(name=name)
+        
+        # 根据配置选择合适的客户端
+        if config.get("llm_provider", "").lower() == "tongyi":
+            # 对于通义千问，使用通义的embedding服务
+            self.client = OpenAI(
+                base_url=config.get("backend_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                api_key=config.get("api_key", "")
+            )
+        else:
+            # 默认使用OpenAI
+            self.client = OpenAI(
+                base_url=config.get("backend_url", "https://api.openai.com/v1"),
+                api_key=config.get("api_key", "")
+            )
+        
+        try:
+            self.chroma_client = chromadb.Client(Settings(allow_reset=True))
+            self.situation_collection = self.chroma_client.create_collection(name=name)
+        except Exception:
+            # 如果集合已存在，获取现有集合
+            self.situation_collection = self.chroma_client.get_collection(name=name)
 
     def get_embedding(self, text):
         """Get OpenAI embedding for a text"""

@@ -1,7 +1,4 @@
-"""
-学科专业Agent的Prompt模板
-用于为每个二级学科生成专业化的Agent人物画像
-"""
+
 
 DISCIPLINE_AGENT_TEMPLATE = """
 # 学科专业Agent人物画像
@@ -61,9 +58,7 @@ def generate_discipline_agent_prompt(discipline_code: str, discipline_name: str)
         discipline_name=discipline_name
     )
 
-# 示例使用
 if __name__ == "__main__":
-    # 为"代数与几何"学科生成prompt
     prompt = generate_discipline_agent_prompt("A01", "代数与几何")
     print(prompt)
 

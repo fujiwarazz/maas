@@ -8,7 +8,6 @@ def create_feasible_manager(llm, memory: EmbeddingMemory):
     """
     综合可行性正反方观点，输出最终评审与结论的裁判节点。
 
-    期望输入（state）关键字段：
     - research_basic_info, research_report_body_summary, academic_analysis_report, research_project_apply_info
     - current_discipline: tuple(code, name)
     - debate_results: Dict[str, Dict[str, DebateState]]
@@ -36,7 +35,8 @@ def create_feasible_manager(llm, memory: EmbeddingMemory):
 
         # 组织当前情境与记忆
         curr_situation = f"{research_info}\n\n{academic_report}\n\n{research_project_apply_info}\n\n{research_body}"
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+        #past_memories = memory.get_memories(curr_situation, n_matches=2)
+        past_memories = []
         past_memory_str = ""
         for rec in past_memories:
             past_memory_str += rec.get("recommendation", "") + "\n\n"
@@ -70,7 +70,6 @@ def create_feasible_manager(llm, memory: EmbeddingMemory):
         response = llm.invoke(prompt)
         judge_summary = str(getattr(response, "content", response)).strip()
 
-        # 更新状态拷贝
         new_feas_state: DebateState = {
             "good_agent_history": good_history,
             "bad_agent_history": bad_history,

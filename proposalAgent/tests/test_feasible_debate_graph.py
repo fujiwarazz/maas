@@ -333,7 +333,7 @@ class FeasibleDebateTestGraph:
 
     def run_single_round_test(self):
         """运行单轮辩论测试"""
-        print("🔥 开始单轮可行性辩论测试")
+        print("开始单轮可行性辩论测试")
         print("=" * 60)
 
         # 创建测试图和状态
@@ -342,18 +342,18 @@ class FeasibleDebateTestGraph:
 
         try:
             # 执行图
-            print("📝 执行辩论流程...")
+            print("执行辩论流程...")
             result = graph.invoke(test_state)
 
             # 验证结果
-            print("\n✅ 辩论流程执行完成")
+            print("\n 辩论流程执行完成")
 
             # 检查辩论结果
             debate_results = result.get("debate_results", {})
             discipline_results = debate_results.get("计算机科学与技术", {})
             feasible_results = discipline_results.get("可行性", {})
 
-            print(f"\n📊 辩论结果分析:")
+            print(f"\n 辩论结果分析:")
             print(
                 "正方发言次数: {}".format(
                     len(feasible_results.get("good_agent_history", []))
@@ -373,18 +373,18 @@ class FeasibleDebateTestGraph:
             # 显示裁判结论
             judge_summary = feasible_results.get("judge_summary", "")
             if judge_summary:
-                print(f"\n🏛️ 裁判结论:")
+                print(f"\n 裁判结论:")
                 print(judge_summary)
 
             # 检查最终决策
             final_decision = result.get("feasibility_decision", "")
             if final_decision:
-                print("\n⚖️ 最终可行性决策已生成")
+                print("\n 最终可行性决策已生成")
 
             return True
 
         except Exception as e:
-            print(f"❌ 测试执行失败: {e}")
+            print(f" 测试执行失败: {e}")
             import traceback
 
             traceback.print_exc()
@@ -392,7 +392,7 @@ class FeasibleDebateTestGraph:
 
     def run_multi_round_test(self, rounds=2):
         """运行多轮辩论测试"""
-        print(f"🔄 开始{rounds}轮可行性辩论测试")
+        print(f"开始{rounds}轮可行性辩论测试")
         print("=" * 60)
 
         graph = self.create_feasible_debate_graph()
@@ -400,7 +400,7 @@ class FeasibleDebateTestGraph:
 
         try:
             for round_num in range(1, rounds + 1):
-                print(f"\n🎯 第 {round_num} 轮辩论")
+                print(f"\n 第 {round_num} 轮辩论")
                 print("-" * 30)
 
                 # 更新轮次
@@ -417,7 +417,7 @@ class FeasibleDebateTestGraph:
                 # 更新状态为下一轮准备
                 test_state = result
 
-                print("✅ 第 {} 轮辩论完成".format(round_num))
+                print("第 {} 轮辩论完成".format(round_num))
 
             # 显示最终结果
             final_results = (
@@ -425,7 +425,7 @@ class FeasibleDebateTestGraph:
                 .get("计算机科学与技术", {})
                 .get("可行性", {})
             )
-            print("\n🏆 多轮辩论总结:")
+            print("\n多轮辩论总结:")
             print("总轮次: {}".format(rounds))
             print(
                 "正方总发言: {}".format(

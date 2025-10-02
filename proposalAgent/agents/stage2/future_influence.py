@@ -30,6 +30,8 @@ def create_future_influence_agent(llm, toolkit):
             # 获取未来影响力分析工具
             tools = [baidu_search_with_content]
 
+            future_influence_limit = state.get("future_influence_limit", 0)
+            future_influence_count = state.get("future_influence_count", 0)
 
             system_message = (
                 "你是一个专业的未来影响力分析专家，负责评估研究项目的未来发展潜力和社会影响力。"
@@ -51,16 +53,19 @@ def create_future_influence_agent(llm, toolkit):
                     "当你获得足够的分析数据后，请基于多维度评估结果生成完整详细的未来影响力分析报告。"
                     "你的分析应该客观、准确，既要指出项目的潜力，也要识别可能的风险和挑战。"
                     "如果你已经完成了最终的未来影响力分析报告，请在回复前加上'最终未来影响力分析报告：'标识。"
-                    "你可以使用以下工具：{tool_names}。\n{system_message}"
+                    "你可以使用以下工具：{tool_names}"
                     "\n\n项目信息：{project_info}"
                     "\n\n研究人员信息：{person_info}"
-                    "\n\n项目申请信息：{application_info}",
+                    "\n\n项目申请信息：{application_info}"
+                    "\n\n当前未来影响力分析次数：{current_count}，调用工具次数上限:{future_influence_limit}"
                 ),
                 MessagesPlaceholder(variable_name="messages"),
             ])
                         
             prompt = prompt.partial(system_message=system_message)
             prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+            prompt = prompt.partial(current_count=future_influence_count)
+            prompt = prompt.partial(future_influence_limit=future_influence_limit)
             
             # 从状态中获取项目相关信息
             project_info = state.get("research_basic_info", "暂无项目基本信息")
@@ -85,8 +90,9 @@ def create_future_influence_agent(llm, toolkit):
                 future_influence_report = "正在使用未来影响力分析工具进行深度评估..."
 
             return {
-                "messages": [result],
-                "future_influence_analysis_report": future_influence_report,
+                "messages": result,
+                "future_influence_report": future_influence_report,
+                "future_influence_count": state.get("future_influence_count", 0) + 1,
             }
             
         except Exception as e:
@@ -95,7 +101,8 @@ def create_future_influence_agent(llm, toolkit):
             
             return {
                 "messages": [],
-                "future_influence_analysis_report": error_message,
+                "future_influence_report": error_message,
+                "future_influence_count": state.get("future_influence_count", 0) + 1,
             }
 
     return future_influence_agent

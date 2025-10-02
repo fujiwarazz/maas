@@ -2,9 +2,9 @@
 
 from proposalAgent.agents.utils.agent_states import AgentState
 import json
-"""
-这个文件使用Agent state中的message[-1]来判断llm是否调用工具，如果调用了工具那么就继续走分析师那一步，
-"""
+import math
+
+
 class ConditionalLogic:
     """Handles conditional logic for determining graph flow."""
     
@@ -17,7 +17,6 @@ class ConditionalLogic:
         """Determine if the output tool should be called."""
         return True
 
-    # ========== Stage 0 / Intention ==========
     def _is_finalize_signal(self, text: str) -> bool:
         if not isinstance(text, str):
             return False
@@ -39,24 +38,16 @@ class ConditionalLogic:
 
     def _route_three_way(self, state: AgentState, tools_key: str, msg_clear_key: str, final_key: str) -> str:
         last = self._last_message(state)
+        
         if last is None:
             return msg_clear_key
-        if self._is_finalize_signal(getattr(last, "content", "")):
-            return final_key
+        # if self._is_finalize_signal(getattr(last, "content", "")):
+        #     return final_key
         if self._has_tool_calls(last):
             return tools_key
         return msg_clear_key
 
-    def _route_debate(self, state: AgentState):
-        last = self._last_message(state)
-        if last is None:
-            return None
-        content = getattr(last, "content", "") or ""
-        if self._is_finalize_signal(content):
-            return "end"
-        if self._has_tool_calls(last):
-            return "tools"
-        return "continue"
+   
 
         # 独立函数用于 setup.add_conditional_edges 中的 "should_output"
     def should_output(self,state: AgentState) -> str:
@@ -120,16 +111,66 @@ class ConditionalLogic:
 
     # ========== Stage 2 / 收集阶段 ==========
     def should_continue_academic_analysis(self, state: AgentState) -> str:
-        return self._route_three_way(state, "tools_academic", "msg_clear_academic", "final_analyst_node")
+        last = self._last_message(state)
+        academic_analysis_limit = state.get("academic_analysis_limit", 0)
+        academic_analysis_count = state.get("academic_analysis_count", 0)
+        academic_analysis_weight = state.get("weight_distribution", {}).get("academic_agent", 0.2) or 0.2
+        max_iter = math.ceil(academic_analysis_weight * academic_analysis_limit)
+        if state.get("feedback_pending") and state.get("feedback_target") == "academic_analysis_node":
+            return "msg_clear_academic"
+        if last is None:
+            return "msg_clear_academic"
+        if self._has_tool_calls(last):
+            return "tools_academic"
+        if academic_analysis_count > max_iter:
+            return "msg_clear_academic"
+        
+        # if self._is_finalize_signal(getattr(last, "content", "")):
+        #     return "final_analyst_node"
+        
+        return "msg_clear_academic"
+
 
     def should_continue_social_analysis(self, state: AgentState) -> str:
-        return self._route_three_way(state, "tools_social", "msg_clear_social", "final_analyst_node")
+        return self._route_three_way(state, "tools_social", "msg_clear_social", "msg_clear_social")
+
+
 
     def should_continue_future_influence(self, state: AgentState) -> str:
-        return self._route_three_way(state, "tools_future_influence", "msg_clear_future_influence", "final_analyst_node")
+        last = self._last_message(state)
+        future_influence_limit = state.get("future_influence_limit", 0)
+        future_influence_count = state.get("future_influence_count", 0)
+
+        future_influence_weight = state.get("weight_distribution", {}).get("future_influence_agent", 0.2) or 0.2
+        max_iter = math.ceil(future_influence_weight * future_influence_limit)
+        if state.get("feedback_pending") and state.get("feedback_target") == "future_influence_node":
+            return "msg_clear_future_influence"
+        print(f"future_influence_count: {future_influence_count}, max_iter: {max_iter}")
+        if last is None:
+            return "msg_clear_future_influence"
+        if self._has_tool_calls(last):
+            return "tools_future_influence"
+        if future_influence_count > max_iter:
+            return "msg_clear_future_influence"
+        
+        # if self._is_finalize_signal(getattr(last, "content", "")):
+        #     return "final_analyst_node"
+        
+        return "msg_clear_future_influence"
 
     def should_continue_interdisciplinary(self, state: AgentState) -> str:
-        return self._route_three_way(state, "tools_interdisciplinary", "msg_clear_interdisciplinary", "final_analyst_node")
+        last = self._last_message(state)
+        if state.get("feedback_pending") and state.get("feedback_target") == "interdisciplinary_node":
+            return "msg_clear_interdisciplinary"
+        if last is None:
+            return "msg_clear_interdisciplinary"
+        if self._has_tool_calls(last):
+            return "tools_interdisciplinary"
+        if state.get("interdisciplinary_results"):
+            return "msg_clear_interdisciplinary"
+        
+        # 默认情况
+        return "msg_clear_interdisciplinary"
 
     def should_request_human_review(self, state: AgentState) -> str:
         """
@@ -230,12 +271,47 @@ class ConditionalLogic:
 
     # ========== 辩论阶段 ==========
     def should_continue_feasibility(self, state: AgentState) -> str:
-        res = self._route_debate(state)
-        return res if res is not None else "continue"
+        debate_results = state.get("debate_results", {}) or {}
+        current_disc = state.get("current_discipline")
+        feas_state = debate_results.get(current_disc, {}) or {}
+        feas_state = feas_state.get("可行性", {}) or {}
 
+        if state.get("feedback_pending") and state.get("feedback_target") == "debate_controller":
+            return "judge"
+
+        current_rounds = int(feas_state.get("debate_rounds", 1))
+        if current_rounds >= self.max_debate_rounds:
+            return "judge"
+
+        current_response = feas_state.get("current_response", "") or ""
+        if not current_response:
+            return "good"
+        if current_response.startswith("可行性正方观点"):
+            return "bad"
+        if current_response.startswith("可行性反方观点"):
+            return "good"
+        return "judge"
+        
     def should_continue_innovation(self, state: AgentState) -> str:
-        res = self._route_debate(state)
-        return res if res is not None else "continue"
+        debate_results = state.get("debate_results", {}) or {}
+        current_disc = state.get("current_discipline")
+        innovation_state = debate_results.get(current_disc, {}) or {}
+        innovation_state = innovation_state.get("创新性", {}) or {}
 
-    # 额外的风控/影响判断函数已删除（未在当前流程中使用且类型与 AgentState 不一致）
+        if state.get("feedback_pending") and state.get("feedback_target") == "debate_controller":
+            return "judge"
+
+        current_rounds = int(innovation_state.get("debate_rounds", 1))
+        if current_rounds >= self.max_debate_rounds:
+            return "judge"
+
+        current_response = innovation_state.get("current_response", "") or ""
+        if not current_response:
+            return "good"
+        if current_response.startswith("创新性正方观点"):
+            return "bad"
+        if current_response.startswith("创新性反方观点"):
+            return "good"
+        return "judge"
+
 

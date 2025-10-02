@@ -79,33 +79,32 @@ def create_generator_agent(llm: ChatOpenAI):
             (
                 "human",
                 """请基于以下全部分析信息，生成最终的项目评估报告：
+ 
+                    分析报告：
+                    学术分析：{academic_analysis_report}
+                    社会分析：{social_analysis_report}
+                    未来影响分析：{future_influence_report}
 
-            研究主题：{research_topic}
-            研究结构：{research_structure}
-            申请人信息：{research_person_info}
-            基本信息：{research_basic_info}
-            项目团队信息：{research_project_team_info}
-            项目申请信息：{research_project_apply_info}
-            报告主体摘要：{research_report_body_summary}
-
-            分析报告：
-            学术分析：{academic_analysis_report}
-            社会分析：{social_analysis_report}
-            未来影响分析：{future_influence_report}
-
-            跨学科分析结果：{interdisciplinary_results}
-            辩论结果：{debate_results}
-            
-            最终分析摘要：{final_analysis_summary}
-            
-            完备性检查结果：{completeness_check_result}
-            
-            人类反馈（如有）：{human_feedback}
-            
-            请生成完整的项目评估报告。""",
+                    跨学科分析结果：{interdisciplinary_results}
+                    辩论结果：{debate_results}
+                    
+                    最终分析摘要：{final_analysis_summary}
+                    
+                    完备性检查结果：{completeness_check_result}
+                    
+                    人类反馈（如有）：{human_feedback}
+                    
+                    请生成完整的项目评估报告。""",
             ),
         ]
     )
+    #  研究主题：{research_topic}
+    #                 研究结构：{research_structure}
+    #                 申请人信息：{research_person_info}
+    #                 基本信息：{research_basic_info}
+    #                 项目团队信息：{research_project_team_info}
+    #                 项目申请信息：{research_project_apply_info}
+    #                 报告主体摘要：{research_report_body_summary}
 
     def generator_node(state: AgentState):
         """

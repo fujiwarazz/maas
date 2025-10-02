@@ -90,13 +90,18 @@ def create_feedback_analysis_agent(llm: ChatOpenAI):
             "human_feedback": state.get("human_feedback", "无人类反馈")
         }
         
-        # 调用LLM进行分析
         chain = prompt | llm
         result = chain.invoke(input_data)
         
-        # 解析结果
         try:
             content = result.content if hasattr(result, 'content') else str(result)
+            
+            if content.startswith('```json'):
+                content = content[7:]
+            if content.endswith('```'):
+                content = content[:-3]
+            content = content.strip()
+            
             feedback_analysis_result = json.loads(content)
             
             # 更新状态
@@ -106,11 +111,11 @@ def create_feedback_analysis_agent(llm: ChatOpenAI):
             
             # 添加分析消息到消息历史
             analysis_summary = f"""反馈分析完成：
-发现问题：{len(feedback_analysis_result.get('identified_issues', []))}个
-缺失内容：{len(feedback_analysis_result.get('missing_content', []))}项
-优先级：{feedback_analysis_result.get('priority_level', 'N/A')}/5
-决定路径：{feedback_analysis_result.get('next_step', 'generate')}
-原因：{feedback_analysis_result.get('reason', '无详细说明')}"""
+                发现问题：{len(feedback_analysis_result.get('identified_issues', []))}个
+                缺失内容：{len(feedback_analysis_result.get('missing_content', []))}项
+                优先级：{feedback_analysis_result.get('priority_level', 'N/A')}/5
+                决定路径：{feedback_analysis_result.get('next_step', 'generate')}
+                原因：{feedback_analysis_result.get('reason', '无详细说明')}"""
             
             state["messages"].append(AIMessage(content=analysis_summary))
             

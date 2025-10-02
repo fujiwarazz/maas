@@ -59,7 +59,7 @@ def create_final_analyst_agent(llm: ChatOpenAI):
             跨学科分析结果：{interdisciplinary_results}
 
             辩论结果：{debate_results}
-            请提供全面的综合分析。"""
+            请提供全面的综合分析和完整的总结。"""
         ),
     ])
     

@@ -1,0 +1,694 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+完整的Stage3图工作流测试
+测试完备性检查、反馈分析和最终报告生成的完整流程
+包含human-in-the-loop工作流测试
+"""
+
+import sys
+import os
+import asyncio
+# 添加项目根目录到 Python 路径
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
+
+from langchain_openai import ChatOpenAI
+from langgraph.graph import START, StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
+from proposalAgent.agents.utils.agent_utils import Toolkit
+from proposalAgent.graphs.conditional_logic import ConditionalLogic
+
+# 导入需要的组件
+from proposalAgent.agents.stage3.completeness_checker import create_completeness_checker_agent
+from proposalAgent.agents.stage3.final_analysis import create_final_analyst_agent
+from proposalAgent.agents.stage3.feedback_analysis_agent import create_feedback_analysis_agent
+from proposalAgent.agents.stage3.generator import create_generator_agent
+from proposalAgent.agents.utils.agent_states import AgentState
+from proposalAgent.model_config import TONGYI_CONFIG
+from logging import getLogger
+
+logger = getLogger("TestStage3Workflow")
+
+
+config = TONGYI_CONFIG
+toolkit = Toolkit(config=config)
+deep_think_llm = ChatOpenAI(model="qwen-plus",
+                            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                            api_key=TONGYI_CONFIG.get("api_key"))
+
+
+conditional_logic = ConditionalLogic()
+workflow = StateGraph(AgentState)
+
+final_analyst_node = create_final_analyst_agent(deep_think_llm)
+completeness_checker_node = create_completeness_checker_agent(
+    deep_think_llm
+)
+generator_node = create_generator_agent(deep_think_llm)
+feedback_analysis_node = create_feedback_analysis_agent(deep_think_llm)
+
+workflow.add_node("final_analyst_node", final_analyst_node)
+workflow.add_node("completeness_checker_node", completeness_checker_node)
+workflow.add_node("generator_node", generator_node)
+
+
+
+def human_review_node(state: AgentState) -> AgentState:
+    """
+    增强的人类审核节点，首先进行完备性检查，然后根据结果决定是否需要人类输入。
+    如果完备性检查通过，将跳过人类审核直接生成报告。
+    如果未通过，则使用interrupt API等待人类反馈。
+    """
+    state = completeness_checker_node(state)
+
+    completeness_recommendation = state.get(
+        "completeness_recommendation", "need_human_review"
+    )
+    if completeness_recommendation == "complete":
+        logger.info("完备性检查通过，将直接生成报告")
+        state["skip_human_review"] = True
+        return state
+    else:
+        logger.info("完备性检查未通过，需要人类审核")
+        result = interrupt(
+            {
+                "task": "请审查项目评估分析并提供反馈意见",
+                "analysis_summary": state.get("final_analysis_summary", ""),
+                "completeness_issues": state.get(
+                    "completeness_check_result", {}
+                ),
+             #   "academic_report": state.get("academic_analysis_report", ""),
+             #   "social_report": state.get("social_analysis_report", ""),
+            #    "future_influence_report": state.get(
+            #        "future_influence_report", ""
+            #    ),
+            #    "debate_results": state.get("debate_results", {}),
+                "instructions": "请提供您的反馈意见。如果分析满足要求，请输入'approved'。如果需要改进，请详细说明需要改进的方面。",
+            }
+        )
+
+        if isinstance(result, dict):
+            state["human_feedback"] = result.get("feedback", "")
+            state["skip_human_review"] = False
+        elif isinstance(result, str):
+            state["human_feedback"] = result
+            state["skip_human_review"] = False
+        return state
+
+def _route_after_human_review(state: AgentState) -> str:
+    """
+    根据完备性检查结果和是否有人类反馈来决定路由
+    """
+    # 检查是否跳过人类审核
+    skip_human_review = state.get("skip_human_review", False)
+    if skip_human_review:
+        logger.info("完备性检查通过，直接生成报告")
+        return "generate"
+
+    # 检查是否有人类反馈
+    human_feedback = state.get("human_feedback")
+    if human_feedback and human_feedback.strip():
+        logger.info("检测到人类反馈，进行反馈分析")
+        return "feedback_analysis"
+    else:
+        logger.info("没有人类反馈，可能需要等待用户输入")
+        # 这种情况下图形应该已经中断等待输入
+        # 如果到这里说明有问题，默认分析反馈
+        return "feedback_analysis"
+            
+workflow.add_node("human_review_node", human_review_node)
+workflow.add_node("feedback_analysis_node", feedback_analysis_node)
+
+
+
+# workflow.add_edge("final_analyst_node", "human_review_node")
+
+workflow.add_edge(START, "human_review_node")
+
+workflow.add_conditional_edges(
+            "human_review_node",
+            _route_after_human_review,
+            {
+                "generate": "generator_node",  # 完备性检查通过，直接生成
+                "feedback_analysis": "feedback_analysis_node",  # 需要分析人类反馈
+            },
+        )
+
+workflow.add_conditional_edges(
+            "feedback_analysis_node",
+            conditional_logic.route_after_feedback,
+            {
+                # Loop back to earlier stages based on feedback
+                # "academic_analysis": "academic_analysis_node",
+                # "social_analysis": "social_analysis_node",
+                # "future_influence": "future_influence_node",
+                # "interdisciplinary": "interdisciplinary_node",
+                # "debate": "debate_controller",
+                "generate": "generator_node",
+            },
+        )
+
+workflow.add_edge("generator_node", END)
+
+
+checkpointer = MemorySaver()
+
+graph = workflow.compile(checkpointer=checkpointer)
+
+
+async def main():
+    state:AgentState = {
+        "messages": [],
+            
+            "filepath": "",
+            "research_topic": [],
+            "intention_decision": "",
+            
+            "research_structure": "",
+            
+            "research_person_info": """
+            ### 申请人个人履历
+                **姓名:** 杜一 [P2]
+                **性别:** 男 [P2]
+                **出生年月:** 1988年03月 [P2]
+                **民族:** 汉族 [P2]
+                **学位:** 博士 [P2]
+                **职称:** 研究员 [P2]
+                **是否在站博士后:** 否 [P2]
+                **电子邮箱:** duyi@cnic.cn [P2]
+                **办公电话:** 010-58812554 [P2]
+                **国别或地区:** 中国 [P2]
+                **申请人类别:** 依托单位全职 [P2]
+                **工作单位:** 中国科学院计算机网络信息中心 [P2]
+                **主要研究领域:** 科技大数据知识图谱 [P2]
+
+                **教育经历:**
+                * 2008-09至2013-07, 中国科学院软件研究所, 计算机应用技术, 博士 [P47]
+                * 2004-09至2008-06, 山东大学, 软件工程, 学士 [P47]
+
+                **科研与学术工作经历:**
+                * 2021-12至今, 中国科学院计算机网络信息中心, 大数据应用发展部, 研究员 [P47]
+                * 2021-02至2022-02, 国家自然科学基金委员会, 交叉科学部, 无 [P47]
+                * 2015-12至2021-12, 中国科学院计算机网络信息中心, 大数据应用发展部, 副研究员 [P47]
+                * 2013-07至2015-12, 中国科学院计算机网络信息中心, 科学数据中心, 助理研究员 [P47]
+
+                **主持或参加的国家自然科学基金项目/课题:**
+                * 优秀青年科学基金项目, T2322027, 科技大数据知识图谱, 2024-01-01 至 2026-12-31, 200万元, 在研, 主持 [P47]
+                * 专项项目, L1924075, 国家自然科学基金成果开放共享政策与平台架构设计研究, 2020-01-01 至 2021-12-31, 40万元, 结题, 主持 [P47]
+                * 重点项目, 61836013, 面向领域大数据的知识图谱构建, 2019-01-01 至 2023-12-31, 288万元, 结题, 参与 [P47]
+
+                **主持或参加的其他科研项目/课题:**
+                * 专项项目, E42Q2302, 部学部增选专家库与专家指派系统, 2023-06 至今, 253万元, 在研, 主持 [P47]
+                * 重点研发青年科学家项目, 2022YFF0712200, 基于领域知识图谱的光电催化材料挖掘软件, 2022-11 至 2025-10, 200万元, 在研, 主持 [P47]
+                * 青年创新促进会, 2021166, 2021-01 至 2024-12, 80万元, 在研, 主持 [P47]
+                * 委托课题, TC200E024, 国家自然科学基金大数据知识管理服务平台, 2020-09 至 2023-09, 478万元, 在研, 主持 [P47]
+                * 中科院专项, E2292304, 科技智库人才系统, 2020-10 至 2023-03, 300万元, 结题, 主持 [P47]
+                * 中科院专项, 292021000153, 国际合作知识管理与智能化服务平台, 2021-09 至 2022-09, 125万元, 结题, 主持 [P47]
+                * 创新特区项目, 1912-2, 基于XX知识图谱的推荐方法研究, 2021-01 至 2022-06, 250万元, 结题, 主持 [P47]
+                * 创新特区项目, 1912, 多模异构XX知识表示方法研究, 2020-01 至 2020-12, 100万元, 结题, 主持 [P48]
+
+                **代表性研究成果和学术奖励:**
+                * **代表性论著:**
+                    * Meng Xiao; Min Wu; Ziyue Qiao; Yanjie Fu; Zhiyuan Ning; Yi Du; Yuanchun Zhou; Interdisciplinary Fairness in Imbalanced Research Proposal Topic Inference: A Hierarchical Transformer-based Method with Selective Interpolation, ACM Transactions on Knowledge Discovery from Data, 2024, 6(1) (期刊论文)(本人标注:共同通讯作者) [P48]
+                    * 王卫军;宁致远;董昊;乔子越;杜一;周园春;基于语义相似关系的学科交叉主题识别方法, 情报学报, 2024, 43(1): 34-47 (期刊论文)(本人标注:唯一通讯作者) [P48]
+                    * Yi Du; Ludi Wang; Mengyi Huang; Dongze Song; Wenjuan Cui; Yuanchun Zhou; Autodive: An Integrated Onsite Scientific Literature Annotation Tool, Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (ACL 2023), Toronto, Canada, 2023-7-9至2023-7-14 (会议论文)(本人标注:唯一第一作者,唯一通讯作者) [P48]
+                    * Meng Xiao; Ziyue Qiao; Yanjie Fu; Hao Dong; Yi Du; Pengyang Wang; Hui Xiong; Yuanchun Zhou; Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification, IEEE Transactions on Knowledge and Data Engineering, 2023, 35(9): 9685-9699 (期刊论文)(本人标注:共同通讯作者) [P48]
+                    * Ziyue Qiao; Yanjie Fu; Pengyang Wang; Meng Xiao; Zhiyuan Ning; Denghui Zhang; Yi Du; Yuanchun Zhou; RPT: Toward Transferable Model on Heterogeneous Researcher Data via Pre-Training, IEEE Transactions on Big Data, 2023, 186(199) (期刊论文)(本人标注:唯一通讯作者) [P48]
+                * **论著之外的代表性研究成果和学术奖励:**
+                    * 专利: Method for Disambiguating Between Authors with Same Name on Basis of Network Representation and Semantic Representation, 2023-10-3, 美国, EP19957434.4/19957434.4 [P48]
+                    * 专利: 一种基于网络表征和语义表征的同名作者消歧方法, 2022-1-6, 中国, CN201911352416.9 [P48]
+                    * 专利: 一种基于LightGBM分类与表示学习的姓名消歧方法和系统, 2022-10-14, 中国, CN202111153524.0 [P48]
+                    * 专利: 基于图局部结构和文本语义相似性的学术论文推荐方法, 2022-07-12, 中国, CN202010730690.1 [P48]
+                    * 专利: 一种科技资源汇聚与持续服务方法及装置, 2022-10-14, 中国, CN202010865075.1 [P48]
+                    * 专利: 一种可利用专家知识的申请书多标签层次分类方法, 2022-07-26, 中国, CN202110866392.X [P48]
+                    * 专利: 一种基于异质图卷积神经网络嵌入的作者名字消歧方法, 2022-08-19, 中国, CN201910635799.4 [P48]
+                    * 专利: 一种基于作者著作树和图神经网络的论文合作者推荐方法, 2022-09-09, 中国, CN202010710086.2 [P49]
+                    * 专利: 无监督的基于表示学习的同名作者消歧方法及装置, 2021-12-10, 中国, CN202110240824.6 [P49]
+
+            """,
+            
+            "research_basic_info": """
+            ### 项目申请书基本信息
+                **项目名称:** 科技成果评价类:基于知识图谱与要素化大模型的基础研究科技成果评价体系及验证 [P1]
+                **项目申请代码:** F0212. 数据科学与大数据计算 [P1]
+                **中文关键词:** 数据质量评估;科技成果评价;大模型;期刊分区;交叉学科 [P2]
+                **英文关键词:** data quality evaluation; scientific and technological achievement evaluation; large language model; journal ranking; interdisciplinary discipline [P2]
+
+            """,
+            
+            "research_project_team_info": """
+            ### 项目团队成员及个人履历
+                **周园春** [P50]
+                * **BRID:** 01359.00.97811 [P50]
+                * **职称:** 研究员 [P50]
+                * **教育经历:** 博士 (2002-09至2006-07); 硕士 (1999-09至2002-07); 其他 (1994-09 至 1997-07) [P50]
+                * **科研与学术工作经历:**
+                    * 2021-01 至今, 中国科学院科学数据总中心, 主任, 研究员 [P50]
+                    * 2022-05至今, 大数据分析系统国家工程研究中心, 副主任, 研究员 [P50]
+                    * 2020-12至今, 中国科学院计算机网络信息中心, 副主任, 研究员 [P50]
+                    * 2018-06至2021-05, 中国科学院计算机网络信息中心, 大数据部主任, 研究员 [P50]
+                    * 2014-01至2018-06, 中国科学院计算机网络信息中心, 科学数据中心(大数据部)副主任, 研究员 [P50]
+                    * 2013-09至2014-03, 美国罗格斯大学, 商学院(熊辉教授组)高级访问学者, 研究员 [P50]
+                    * 2009-01至2013-12, 中国科学院计算机网络信息中心, 科学数据中心, 副研究员 [P50]
+                    * 2006-04至2008-12, 中国科学院计算机网络信息中心, 科学数据中心, 助理研究员 [P50]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 重大研究计划, 92470204, 支持下一代人工智能的通用型高质量科学数据库, 2025-01-01至2028-12-31, 300万元, 在研, 主持 [P50]
+                    * 专项项目, J2224012, 基于信创环境科学基金全过程管理的架构设计与实践研究, 2023-01-01 至 2023-12-31, 42万元, 结题, 参与 [P50]
+                    * 专项项目, L1924075, 国家自然科学基金成果开放共享政策与平台架构设计研究, 2020-01-01 至 2021-12-31, 40万元, 结题, 参与 [P50]
+                    * 重点项目, 61836013, 面向领域大数据的知识图谱构建, 2019-01-01 至 2023-12-31, 288万元, 结题, 主持 [P50]
+                * **主持或参加的其他科研项目/课题:**
+                    * 国家重点研发计划项目, 2023YFF0616900, 典型科技资源标识可信服务关键技术研究与应用, 2024-03至2027-02, 963万元, 在研, 主持 [P51]
+                    * 中国科学院期刊专项项目, 2022-qkcb-07, 数字化平台(科技文献、科学数据、科技评价等融合平台)建设, 2022-01至2024-12, 2584万元, 在研, 主持 [P51]
+                    * 十三五信息化专项, XXH13505, 科学大数据工程, 2017-01至2020-12, 4600万元, 结题, 主持 [P51]
+                    * 十三五信息化专项, XXH13514, 中国科学院科学数据中心体系建设, 2019-01 至 2020-12, 3000万元, 结题, 主持 [P51]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * Pengyang Wang; Yanjie Fu; Yuanchun Zhou(通讯作者); Kunpeng Liu; Xiaolin Li; Kien Hua; Exploiting Mutual Information for Substructure-aware Graph Representation Learning, Twenty-Ninth International Joint Conference on Artificial Intelligence (IJCAI 2020) (CCF A), Yokohama, Japan, 2021-1-7至2021-1-15 (会议论文)(本人标注:唯一通讯作者) [P51]
+                        * Haoteng Yan; Ronghao Wang; Shuai Ma; Daoran Huang; Si Wang; Jie Ren; Changfa Lu; Xin Chen; Xiaoyong Lu; Zikai Zheng; Weiqi Zhang; Jing Qu; Yuanchun Zhou(通讯作者); Guang-Hui Liu; Lineage Landscape: a comprehensive database that records lineage commitment across species, Nucleic Acids Research (SCI, Q1, IF:19.16) (构建了谱系领域全景数据库), 2023, 51(D1): D1061-D1066 (期刊论文)(本人标注:共同通讯作者) [P51]
+                        * Meng Xiao; Ziyue Qiao; Yanjie Fu; Hao Dong; Yi Du; Pengyang Wang; Hui Xiong; Yuanchun Zhou(通讯作者); Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification, IEEE Transactions on Knowledge and Data Engineering, 2023, 35(9): 9685-9699 (期刊论文)(本人标注:共同通讯作者) [P51]
+                        * 周园春;王卫军;乔子越;肖濛;杜一;科技大数据知识图谱构建方法及应用研究综述, 中国科学-信息科学(CCF A类中文期刊), 2020, 50(7): 957-987 (期刊论文)(本人标注:唯一第一作者) [P51]
+                        * Xiaodong Yang; Guole Liu; Guihai Feng; Dechao Bu; Pengfei Wang; Jie Jiang; Shubai Chen; Qinmeng Yang; Hefan Miao, Yiyang Zhang; Zhenpeng Man; Zhongming Liang; Zichen Wang; Yaning Li; Zheng Li; Yana Liu; Yao Tian; Wenhao Liu; Cong Li; Ao Li; Jingxi Dong; Zhilong Hu; Chen Fang; Lina Cui; Zixu Deng; Haipi Jiang; Wentao Cui; Jiahao Zhang; Zhaohui Yang; Handong Li; Xingjian He; Liqun Zhong; Jiaheng Zhou; Zijian Wang; Qingqing Long; Ping Xu; The X-Compass Consortium; Hongmei Wang; Zhen Meng; Xuezhi Wang; Yangang Wang Yong Wang; Shihua Zhang; Jingtao Guo; Yi Zhao; Yuanchun Zhou(通讯作者); Fei Li; Jing Liu; Yiqiang Chen; Ge Yang; Xin Li; GeneCompass: deciphering universal gene regulatory mechanisms with a knowledge-informed cross-species foundation model, Cell Research(生命领域顶刊,IF:44), 2024, 1-16 (期刊论文)(本人标注:共同通讯作者) [P51]
+                    * **论著之外的代表性研究成果和学术奖励:**
+                        * 科研奖励: 优秀指导教师, 中国科学院, 其他, 其他, 2023 [P51]
+                        * 科研奖励: 大规模地理空间数据云服务关键技术与应用, 北京市政府, 科学技术奖, 省部二等奖, 2016 [P51]
+                        * 科研奖励: 烟草科研大数据资源标准体系、总体架构和关键技术研究与应用, 国家烟草专卖局/中国烟草总公司, 科技进步, 省部一等奖, 2022 [P51]
+                        * 科研奖励: 大数据驱动的非常规气藏高效智能开发关键技术及应用, 中国石油和化工自动化应用协会, 科技进步, 省部二等奖, 2024 [P52]
+
+                **杨立英** [P53]
+                * **BRID:** 09759.00.01073 [P53]
+                * **职称:** 研究员 [P53]
+                * **教育经历:** 博士 (2004-9至2007-7); 硕士 (1999-09至2002-06); 学士 (1991-9至1995-7) [P53]
+                * **科研与学术工作经历:**
+                    * 2007-07至今, 中国科学院文献情报中心, 科学计量与评价岗位, 研究员 [P53]
+                    * 2001-07至2007-06, 山西大学, 管理学院, 讲师 [P53]
+                    * 1995-07至2001-06, 山西大学, 图书馆, 讲师 [P53]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 专项项目, L2224023, 科学基金学科发展总体态势评估研究:2013-2022, 2023-01-01 至 2024-12-31, 40万元, 在研, 主持 [P53]
+                    * 面上项目, 72074030, 基于论文内容、学科概念地图和影响传递算法的论文评价方法研究, 2021-01-01 至 2024-12-31, 47万元, 在研, 参与 [P53]
+                    * 应急管理项目, L1824052, 化学学科发展态势评估研究: 2009-2018年, 2019-01-01 至 2021-12-31, 40万元, 结题, 参与 [P53]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * 翟琰琦;童嗣超;李立;沈哲思;岳婷;杨立英; 性别视角下的中国科研人员画像, 科学观察, 2024, 19(1): 18-30 (期刊论文)(本人标注:唯一通讯作者) [P53]
+                        * 赵宇;程丽;杨立英;李立;相鹏;基于大数据文献计量学分析《地学前缘》期刊引领力, 地学前缘, 2024, 31(1): 535-549 (期刊论文)(本人标注:唯一通讯作者) [P53]
+                        * Tian-Yuan Huang; Liangping Ding; Yong-Qiang Yu; Lei Huang; Liying Yang; From AR5 to AR6: exploring research advancement in climate change based on scientific evidence from IPCC WGI reports, Scientometrics, 2023, 9(128): 5227-5245 (期刊论文)(本人标注:共同通讯作者) [P53]
+                        * Tian-Yuan Huang; Liying Yang; Superior identification index: Quantifying the capability of academic journals to recognize good research, Scientometrics, 2022, 127(7): 4023-4043 (期刊论文)(本人标注:唯一通讯作者) [P54]
+                        * Sichao Tong; Zhesi Shen; Tian-Yuan Huang; Liying Yang; Fighting Against Academic Misconduct: What Can Scientometricians Do?, Journal of Data and Information Science, 2022, 7(2): 4-5 (期刊论文)(本人标注:唯一通讯作者) [P54]
+
+                **崔文娟** [P55]
+                * **BRID:** 05381.00.91320 [P55]
+                * **职称:** 副研究员 [P55]
+                * **教育经历:** 博士 (2009-09至2013-10); 学士 (2005-09至2009-07) [P55]
+                * **科研与学术工作经历:**
+                    * 2018-12至今, 中国科学院计算机网络信息中心, 大数据部, 副研究员 [P55]
+                    * 2014-07至2018-12, 中国科学院计算机网络信息中心, 大数据部, 助理研究员 [P55]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 重大研究计划, 92470204, 支持下一代人工智能的通用型高质量科学数据库, 2025-01-01至2028-12-31, 300万元, 在研, 参与 [P55]
+                    * 专项项目, L1924075, 国家自然科学基金成果开放共享政策与平台架构设计研究, 2020-01-01 至 2021-12-31, 40万元, 结题, 参与 [P55]
+                * **主持或参加的其他科研项目/课题:**
+                    * 国家重点研发计划政府间国际科技创新合作项目, 2021YFE0108400, 基于大数据原位可视化的高精度大气污染仿真, 2021-07至2024-06, 305万元, 在研, 参与 [P55]
+                    * STS项目, KFJ-STS-QYZD-2021-11-001, 眼健康知识图谱构建与智能应用, 2021-01 至 2022-12, 225万元, 结题, 主持 [P55]
+                    * 中科院信息化专项, XXH13504-03, 知识图谱与立体精准专家画像, 2019-01至2020-12, 178万元, 结题, 主持 [P55]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * Shipeng Guo; Kunpeng Liu; Pengfei Wang; Weiwei Dai; Yi Du; Yuanchun Zhou; Wenjuan Cui; RDKG: A Reinforcement Learning Framework for Disease Diagnosis on Knowledge Graph, 2023 IEEE International Conference on Data Mining (ICDM), Shanghai, China, 2023-12-1至2023-12-4 (会议论文)(本人标注:唯一通讯作者) [P55]
+                        * Ludi Wang; Yang Gao; Xueqing Chen; Wenjuan Cui; Yuanchun Zhou; Xinying Luo; Shuaishuai Xu; Yi Du; Bin Wang; A corpus of CO2 electrocatalytic reduction process extracted from the scientific literature, Scientific Data, 2023, 10(1) (期刊论文)(本人标注:其他情况) [P56]
+                        * Xu Ye; Meng Xiao; Zhiyuan Ning; Weiwei Dai; Wenjuan Cui; Yi Du; Yuanchun Zhou; NEEDED: Introducing Hierarchical Transformer to Eye Diseases Diagnosis, SDM 2023, Minneapolis, Minnesota, U. S, 2023-4-27至2023-4-29 (会议论文)(本人标注:其他情况) [P56]
+                        * Yi Du; Ludi Wang; Mengyi Huang; Dongze Song; Wenjuan Cui; Yuanchun Zhou; Autodive: An Integrated Onsite Scientific Literature Annotation Tool, the 61st Annual Meeting of the Association for Computational Linguistics, Toronto, Canada, 2023-7-9至2023-7-14 (会议论文)(本人标注:其他情况) [P56]
+                        * Ran Zhang; Xuezhi Wang; Pengfei Wang; Zhen Meng; Wenjuan Cui; Yuanchun Zhou; HTCL-DDI: a hierarchical triple-view contrastive learning framework for drug drug interaction prediction, Briefings in Bioinformatics, 2023, 24(6) (期刊论文)(本人标注:其他情况) [P56]
+
+                **陈昕** [P57]
+                * **BRID:** 06829.00.96709 [P57]
+                * **职称:** 高级工程师 [P57]
+                * **教育经历:** 博士 (2004-09至2011-01); 学士 (2000-09至2004-07) [P57]
+                * **科研与学术工作经历:**
+                    * 2016-01至今, 中国科学院计算机网络信息中心, 大数据技术与应用发展部, 高级工程师 [P57]
+                    * 2011-02至2015-12, 中国科学院计算机网络信息中心, 大数据技术与应用发展部, 助理研究员 [P57]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 专项项目, L1924075, 国家自然科学基金成果开放共享政策与平台架构设计研究, 2020-01-01 至 2021-12-31, 40万元, 结题, 参与 [P57]
+                * **主持或参加的其他科研项目/课题:**
+                    * 网信专项, CAS-WX2022SDC-ZZX, 中国科学院科学数据总中心运行维护, 2022-01 至 2025-12, 400万元, 在研, 主持 [P57]
+                    * 网信专项, CAS-WX2022GC-0202, 面向科学数据体系的公共服务平台, 2021-01至2025-12, 630万元, 在研, 主持 [P57]
+                    * 国家重点研发计划子课题, 2021YFF0704204-03, 科学数据与分析软件共享社区及搜索引擎研发, 2021-12至2024-11, 135.6万元, 在研, 主持 [P57]
+                    * 网信专项, CAS-WX023ZX01-05, 科学数据安全分类分级规范研究, 2023-09 至 2024-08, 90万元, 结题, 主持 [P57]
+                    * 传播专项, zhzc0903, 高质量科学数据与知识资源发展战略研究, 2023-01 至 2023-12, 20万元, 结题, 主持 [P57]
+                    * 网信专项, CAS-WX2022ZX01-05, 中国科学院数据安全管理制度研究, 2022-04至2023-03, 90万元, 结题, 参与 [P57]
+                    * 战略性先导科技专项, XDA19020000, 大数据云服务平台, 2018-01至2022-12, 24418.02万元, 结题, 参与 [P57]
+                    * 战略性先导科技专项子课题, XDA16021503, 数据资源与服务规范研制, 2021-11 至 2022-12, 45.2万元, 结题, 主持 [P57]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * 王卫军;李成赞;郑晓欢;褚大伟;姜璐璐;陈昕;杜一;周园春; 全球科学数据出版发展态势分析--基于WebofScience数据库的调研,中国科学数据,2021, 6(3): 1-19 (期刊论文)(本人标注:其他情况) [P58]
+                        * Haoteng Yan; Ronghao Wang; Shuai Ma; Daoran Huang; Si Wang; Jie Ren; Changfa Lu; Xin Chen; Xiaoyong Lu; Zikai Zheng; Weiqi Zhang; Jing Qu; Yuanchun Zhou; Guang-Hui Liu; Lineage Landscape: a comprehensive database that records lineage commitment across species, Nucleic Acids Research, 2022, 51(D1): D1061-D1066 (期刊论文)(本人标注:其他情况) [P58]
+                        * 唐新斋;陈昕;何洪林;郭学兵;苏文;谢传节;沈志宏;张黎;任小丽;侯艳飞;刘峰;新一代“生态网络云”大数据平台的设计与实现, 数据与计算发展前沿, 2022, 4(1): 53-68 (期刊论文)(本人标注:其他情况) [P58]
+                        * 陈昕;郑晓欢;潘博雅;沈志宏;周园春;褚大伟;中国科学院科学数据中心体系建设实践及展望, 中国科学数据, 2023, 8(1) (期刊论文)(本人标注:唯一第一作者) [P58]
+                        * 周园春;陈昕;建立科学数据基础制度,激发科学数据创新活力——兼论“数据二十条”与国家数据局成立, 农业大数据学报, 2023, 5(1): 11-14 (期刊论文)(本人标注:其他情况) [P58]
+
+                **肖濛** [P59]
+                * **BRID:** 00805.00.96167 [P59]
+                * **职称:** 助理研究员 [P59]
+                * **教育经历:** 博士 (2019-09至2023-06); 硕士 (2015-09至2018-06); 学士 (2011-09至2015-06) [P59]
+                * **博士后工作经历:** 在站 (2023-07至今) [P59]
+                * **科研与学术工作经历:**
+                    * 2022-02至2023-02, Agency for Science, Technology and Research, Institute for Infocomm Research, 无 [P59]
+                    * 2018-08至2019-08, 中国科学院, 计算机网络信息中心, 助理工程师 [P59]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 重大研究计划, 92470204, 支持下一代人工智能的通用型高质量科学数据库, 2025-01-01 至 2028-12-31, 300万元, 在研, 参与 [P59]
+                * **主持或参加的其他科研项目/课题:**
+                    * 中国博士后科学基金会, 面上项目, 2023M743565, 基于数据智能的单细胞组学数据优化算法研究, 2024-01至2026-01, 8万元, 在研, 主持 [P59]
+                    * 中国博士后科学基金会, 国家资助博士后计划, GZC20232736, 基于大规模语言模型的基因组学复杂语义特征对齐研究, 2024-01至2026-01, 24万元, 在研, 主持 [P59]
+                    * 中国科学院, 特别研究助理资助计划, 无, 基于大语言模型的组学数据建模方法研究, 2024-01 至 2026-01, 80万元, 在研, 主持 [P59]
+                    * 中华人民共和国科学技术部, 国家任务/国家重点研发计划/青年项目, 2022YFF0712200, 基于领域知识图谱的光电催化材料挖掘软件, 2023-01 至 2025-12, 200万元, 在研, 参与 [P59]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * Meng Xiao; Ziyue Qiao; Yanjie Fu; Hao Dong; Yi Du; Pengyang Wang; Hui Xiong; Yuanchun Zhou; Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification, IEEE Transactions on Knowledge and Data Engineering (CCF-A类推荐国际期刊, ACM/IEEE会刊, JCR一区, 影响因子9.2), 2023, 35(9): 9685-9699 (期刊论文)(本人标注:唯一第一作者) [P59]
+                        * Meng Xiao; Min Wu; Ziyue Qiao; Yanjie Fu; Zhiyuan Ning; Yi Du; Yuanchun Zhou; Interdisciplinary Fairness in Imbalanced Research Proposal Topic Inference: A Hierarchical Transformer-based Method with Selective Interpolation, ACM Transactions on Knowledge Discovery from Data (CCF-B类推荐国际期刊, ACM/IEEE会刊, JCR一区, 影响因子4.3), 2024, 1-21 (期刊论文)(本人标注:唯一第一作者) [P60]
+                        * Meng Xiao; Dongjie Wang; Min Wu; Kunpeng Liu; Hui Xiong; Yuanchun Zhou; Yanjie Fu; Traceable group-wise self-optimizing feature transformation learning: A dual optimization perspective, ACM Transactions on Knowledge Discovery from Data (CCF-B类推荐国际期刊, ACM/IEEE会刊, JCR一区, 影响因子4.3), 2024, 18(4): 1-22 (期刊论文)(本人标注:共同第一作者) [P60]
+                        * Meng Xiao; Ziyue Qiao; Yanjie Fu; Yi Du; Pengyang Wang; Yuanchun Zhou; Expert Knowledge-Guided Length-Variant Hierarchical Label Generation for Proposal Classification, International Conference On Data Mining (CCF-B类国际会议, 2021年接受率9.8%, 数据挖掘领域三大顶级会议), Auckland, New Zealand, 2021-12-7至2021-12-10 (会议论文)(本人标注:共同第一作者) [P60]
+                        * Meng Xiao; Dongjie Wang; Min Wu; Pengfei Wang; Yuanchun Zhou; Yanjie Fu; Beyond Discrete Selection: Continuous Embedding Space Optimization for Generative Feature Selection, IEEE International Conference On Data Mining (CCF-B类国际会议, 2023年接受率9.3%, 数据挖掘领域三大顶级会议), Shanghai, China, 2023-12-1至2023-12-4 (会议论文)(本人标注:共同第一作者) [P60]
+                    * **论著之外的代表性研究成果和学术奖励:**
+                        * 专利: 一种可利用专家知识的申请书多标签层次分类技术, 2022-07-26, 中国, 202110866392X [P60]
+                        * 专利: 一种基于超大规模语言模型的富语义标签数据增广方法, 2023-10-12, 中国, 2023113204843 [P60]
+                        * 专利: 基于深度图切割的scRNA-seq数据聚类方法及装置, 2023-10-16, 中国, 2023113350958 [P60]
+                        * 科研奖励: 中国科学院院长奖特别奖, 中国科学院, 其他, 其他, 2023 [P60]
+                        * 科研奖励: 北京市青年人才托举计划, 北京市科学技术协会, 人才计划, 其他, 2024 [P60]
+
+                **岳婷** [P61]
+                * **BRID:** 03795.00.15806 [P61]
+                * **职称:** 副研究员 [P61]
+                * **教育经历:** 博士 (2017-09至2023-06); 硕士 (2006-09至2009-07); 学士 (1999-09至2003-07) [P61]
+                * **科研与学术工作经历:**
+                    * 2018-07至今, 中国科学院文献情报中心, 计量与评价部, 副研究员 [P61]
+                    * 2010-02至2018-06, 中国科学院文献情报中心, 情报研究部, 助理研究员 [P61]
+                    * 2003-07至2010-01, 中国科学院文献情报中心, 资源建设部, 研究实习员 [P61]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 专项项目, L2224023, 科学基金学科发展总体态势评估研究:2013-2022, 2023-01-01 至 2024-12-31, 40万元, 在研, 参与 [P61]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * Tianyuan Huang; Ting Yue; How does the Research Capacity Gap among Institutions Change over Time?, Journal of Data and Information Science, 2022, 7(4): 3-4 (期刊论文)(本人标注:唯一通讯作者) [P61]
+                        * Ting Yue; Liying Yang; Per Ahlgren; Jielan Ding; Shuangqing Shi; Rainer Frietsch; A Comparison of Citation Disciplinary Structure in Science between the G7 Countries and the BRICS Countries, Journal of Data and Information Science, 2018, 3(3): 14-31 (期刊论文)(本人标注:唯一第一作者) [P61]
+                        * 师洪波;郭红梅;岳婷;钱力;黄定余;常志军; 基于分布式大数据技术的科学计量模块化分析平台构建研究, 数据分析与知识发现, 2020, 4(2/3): 231-238 (期刊论文)(本人标注:其他情况) [P61]
+
+                **翟琰琦** [P62]
+                * **BRID:** 07559.00.35822 [P62]
+                * **职称:** 助理研究员 [P62]
+                * **教育经历:** 硕士 (2014-09至2017-07); 学士 (2010-09至2014-06) [P62]
+                * **科研与学术工作经历:**
+                    * 2020-01至今, 中国科学院文献情报中心, 计量与评价部, 助理研究员 [P62]
+                    * 2017-07至2019-12, 中国科学院文献情报中心, 资源建设部, 研究实习员 [P62]
+                * **主持或参加的国家自然科学基金项目/课题:**
+                    * 应急管理项目, L1824052, 化学学科发展态势评估研究: 2009-2018年, 2019-01-01 至 2021-12-31, 40万元, 结题, 参与 [P62]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * 翟琰琦;杨立英;《智慧计量:科学计量学使用指南》评述, 科学学研究, 2024 (期刊论文)(本人标注:唯一第一作者) [P62]
+                        * 翟琰琦;刘小慧;岳婷;廖宇;丁洁兰;杨立英; 崛起的中国科学:1980—2018 ———基于WoS论文的统计分析, 科技导报(北京), 2019.9, 37(18): 136-145 (期刊论文)(本人标注:唯一第一作者) [P62]
+                        * 翟琰琦;郭红梅;岳婷;杨立英; 中国SCI论文统计报告2018, 科学观察, 2019, 14(2): 1-33 (期刊论文)(本人标注:唯一第一作者) [P62]
+                        * 李爽;翟琰琦;1999—2016年期刊《绿色化学》载文的计量分析, 化学通报, 2018, 81(7): 660-666 (期刊论文)(本人标注:其他情况) [P62]
+                        * 丁洁兰;刘细文;杨立英;翟琰琦;王燕鹏; 科学计量方法在科技政策研究中应用的实证研究, 图书情报工作, 2017, 61(24): 62-71 (期刊论文)(本人标注:其他情况) [P62]
+
+                **张姝** [P63]
+                * **BRID:** 02652.00.79028 [P63]
+                * **职称:** 无 [P63]
+                * **教育经历:** 学士 (2016-09至2020-07) [P63]
+                * **科研与学术工作经历:**
+                    * 2020-08至今, 中国科学院文献情报中心, 计量与评价部, 无 [P63]
+                * **代表性研究成果和学术奖励:**
+                    * **代表性论著:**
+                        * Li Li; Shu Zhang; Ronald Rousseau; A bibliometric study of the work of Rosalind E. Franklin (1920-1958), The Canadian Journal of Information and Library Science, 2022, 45(1): 1–19 (期刊论文)(本人标注:其他情况) [P63]
+
+            
+            
+            """,
+            "research_project_apply_info": """
+            ### 项目申请信息
+                | 序号 | 科目名称     | 金额      |
+                | ---- | -------------- | --------- |
+                | 1    | 项目直接费用合计 | 100.0000  |
+                | 2    | 设备费         | 0.0000    |
+                | 3    | 其中:设备购置费 | 0.0000    |
+                | 4    | 业务费         | 60.0000   |
+                | 5    | 劳务费         | 40.0000   |
+                | 6    | 其他来源资金   | 0.0000    |
+                | 7    | 合计           | 100.0000  |
+                **金额单位:** 万元 [P5]
+
+                **业务费明细:** [P6]
+                * **测试化验加工费:** 45.00万元 [P6]
+                * **出版/信息传播/知识产权事务费:** 5.00万元 [P6]
+                * **差旅/会议/国际合作与交流费:** 10.00万元 [P6]
+
+                **劳务费明细:** [P6]
+                * **博士研究生:** 按照10000元/人月计算,预算40.00万元 [P6]
+                    * 参与项目中数据处理模型、知识对象提取和融合模型的实现: 0.40元/人/月, 5人月, 2人 [P6] (小计 4万元)
+                * **硕士研究生:** 按照4000元/人月计算 [P6]
+                    * 参与项目中数据处理模型、知识对象提取和融合模型的实现: 0.20元/人/月, 30人月, 6人 [P6] (小计 6万元)
+                * **项目聘用研究人员:** 按照2000元/人月计算 [P6]
+                    * 参与本项目核心技术研发: 1.00元/人/月, 5人月, 4人 [P6] (小计 20万元)
+                **总劳务费:** 30.00万元 [P6] (注:此处与总预算40万元存在差异，可能为分项未完全列出)
+
+                **会议/技术交流费用:** [P7]
+                * 拟举行一次技术交流活动,3次项目年度报告会及通讯咨询活动。
+                * 拟组织两次技术交流活动邀请国内高级职称专家20人次,预算经费4.00万元。
+                * 拟定期举行年度报告会,拟邀请高级职称专家10人次,预算2.00万元。
+                * 拟组织一次结题报告会,预算2.00万元。
+                * 专家咨询费合计8.00万元。
+                * 劳务费合计(各项会议/交流费用) 10.00万元。 [P7]
+
+                **单位预算:**
+                * **依托单位:** 中国科学院计算机网络信息中心预算70万元 [P7]
+                * **参与单位:** 中国科学院文献情报中心预算30万元 [P7]
+            
+            """,
+            "research_report_body_summary": """
+            ### 报告正文总结
+                **1. 项目的立项依据 (项目背景和意义):**
+                该项目旨在解决当前基础研究成果评价和验证方式单一、交叉研究缺乏标准、新兴学科适应性不足、评价机制滞后于科技发展等问题。通过构建基于知识图谱与要素化大模型的科技成果评价体系及验证技术，旨在实现对科技成果的全面、多角度评价，提升评价的科学性和公正性，并为科研人员的研究方向提供指导。项目依托中国科学院院士增选专家库、期刊分区、科学数据中心等平台进行验证，具有坚实的学术技术积累和平台建设基础。 [P8-P10]
+
+                **2. 项目的主要内容以及目标或拟解决的关键问题:**
+                * **主要研究内容:**
+                    * **研究内容1:** 构建基于知识图谱的基础研究科技成果评价数据平台，包括科技成果大数据知识图谱构建、新型科技成果评价指标体系构建与评价方法研究、以及基于知识图谱的科技成果评价数据平台构建。 [P18-P28]
+                    * **研究内容2:** 研究基于要素化大模型的多维度基础研究科技成果评价方法，包括科技成果交叉主题多样性评估研究、科技成果未来影响力多视角评估研究、以及要素化多维度科技成果评估系统研究。 [P20-P34]
+                    * **研究内容3:** 信息领域基础研究科技创新成果评价示范，包括信息科学领域数据榜单、信息科学领域期刊分区、以及信息学科专家成果评估。 [P21-P22]
+                * **拟达到的目标:**
+                    * 构建科技成果关键要素抽取和关联关系发现技术，形成高质量的实体和关联关系，构建基于知识图谱的科技成果评价数据平台。 [P22]
+                    * 构建领域共识的层次化学科体系树，训练要素化交叉主题分类大模型，实现交叉主题多样性定量评估；构建要素化科研成果未来影响力评估大模型，实现多视角评估；构建统一的评价框架。 [P22]
+                    * 在信息科学领域的多个场景下实现应用验证，包括构建信息科学领域数据榜单、构建信息科学领域期刊分区表、以及实现信息学科专家成果评估。 [P22]
+                * **拟解决的关键问题:**
+                    * 基于知识图谱的基础研究科技成果评价数据平台构建问题。 [P23]
+                    * 基于要素化大模型的多维度基础研究科技成果综合评价问题。 [P23]
+                    * 基础研究科技成果评价的验证问题。 [P23]
+
+                **3. 拟采取的方案的可行性分析:**
+                项目研究方案具有明确的目标、清晰的内容和具体的研究路径，团队成员单位具有良好的互补性，牵头单位在技术、数据资源和平台建设方面有优势，参与单位在科技文献保障方面有力量。研究方法规范、技术路线清晰，具备完成项目的可行性。 [P37-P38, P41-P46]
+
+                **4. 本项目的特色与创新之处:**
+                * **大模型与知识图谱技术的引入科技成果评价:** 首次将科学数据集等新型科研成果纳入评价范围，利用大模型进行知识抽取，构建科技成果大数据知识图谱，整合大模型与知识图谱技术构建要素化多维度评估基座大模型，设计多 Agent 对话评估机制。 [P38]
+                * **将科学数据评价纳入科技成果综合评价体系:** 丰富评价对象类型，完善评价覆盖面，通过榜单构建和专家评审，探索科学数据评价指标体系。 [P39]
+                * **将交叉研究特色与解决国家重大问题纳入评价体系:** 构建层次化学科体系树，训练要素化交叉主题分类模型，实现科技成果交叉主题多样性评估，构建新的评价指标体系，研究基于多智能体对话评估机制的评价方法。 [P39]
+
+                **5. 年度计划及预期结果:**
+                * **年度计划 (1年):**
+                    * **第一季度:** 调研评价平台与方法，形成评价数据平台架构，确定评价验证场景。 [P39]
+                    * **第二季度:** 研究科学数据评价指标体系、交叉主题多样性评估、未来影响力多视角评估等关键技术，形成评价方法。完成中期检查。 [P39]
+                    * **第三季度:** 完成科技成果评价数据平台建设，完成多维度评价体系构建。 [P39]
+                    * **第四季度:** 在期刊分区、信息学科专家评估应用上进行验证，项目结项。 [P39]
+                * **预期研究成果:**
+                    * 构建一套基础研究科技成果评价体系，包含科学数据等新型科技成果。 [P40]
+                    * 形成科技成果交叉主题多样性评估、科研成果未来影响力多视角评估、要素化多维度科技成果评估等一系列关键技术。 [P40]
+                    * 研究形成科技成果数据平台构建方法，构建完成基础研究科技成果数据平台原型。 [P40]
+                    * 完成信息科学领域数据榜单、中科院期刊分区评价、专家成果评估等三个典型的应用验证。 [P40]
+
+                **6. 工作基础及保障措施:**
+                * **工作基础:**
+                    * **依托单位整体基础:** 中国科学院计算机网络信息中心拥有40年科学数据工作基础，是国家基础科学数据中心依托单位。中国科学院文献情报中心拥有丰富的科技文献资源。 [P41]
+                    * **数据资源:** 全球科技文献、科学数据集、信息科学领域基准数据集等。 [P41]
+                    * **关键技术:** 科技成果评价中的姓名、机构对齐与消歧技术；基于大模型的知识抽取与科技树对齐方法；数据平台构建与科技数据持续供给关键技术。 [P41]
+                    * **平台建设:** 承担国家自然科学基金大数据知识管理服务平台等多个项目。 [P41]
+                    * **研究基础:** 成果综合评价、交叉研究成果评价、科学数据评价等方面的科研积累。 [P41]
+                    * **项目牵头人研究基础:** 长期从事科技大数据知识图谱研究，获批优秀青年科学基金项目。 [P42]
+                    * **数据平台建设工作基础:** 依托中国科学院科学数据总中心和中国科学院文献情报中心的科技大数据知识资源中心，拥有海量数据资源。 [P42-P43]
+                    * **关键技术方面:** 长期深入研究“领域大数据知识图谱构建”，在知识抽取、知识消歧对齐、科学数据供给等方面有坚实研究基础。 [P43]
+                    * **数据平台构建方面:** 承担多个知识服务平台的建设。 [P43]
+                    * **科技成果评价工作基础:** 依靠丰富成果数据资源，采用先进技术方法，在科技成果综合评价、交叉研究成果评价、科学数据评价等方面进行深入研究和探索。 [P44]
+                    * **基础研究成果评价示范平台工作基础:** 项目牵头人可依托中国科学院院士增选专家库与指派系统进行应用示范。 [P44]
+                    * **工作条件:** 拥有国家级创新平台，包括中国科技网、国家基础学科公共科学数据中心等，提供强大的网络资源支撑。 [P45]
+                * **保障机制:** 建立完善的项目管理制度，明确职责分工，建立沟通交流机制，制定风险管理措施，合理配置资源。 [P46]
+
+            """,
+            
+            "weight_distribution": {},
+            
+            "academic_analysis_report": """
+                **申请人：杜一（Yi Du）**
+                ---
+
+                ### 一、基本信息与学术履历
+
+                杜一，男，1988年出生，博士，现任中国科学院计算机网络信息中心大数据应用发展部研究员。2013年于中国科学院软件研究所获得计算机应用技术博士学位，随后进入中国科学院计算机网络信息中心工作，从助理研究员逐步晋升至研究员，职业发展路径清晰且稳定。其主要研究方向为**科技大数据知识图谱**，聚焦于科学数据的智能化处理、知识提取与可视化分析。
+
+                ---
+
+                ### 二、科研项目与资助情况
+
+                杜一在科研项目承担方面表现突出，具备较强的独立科研能力与组织协调能力：
+
+                - **主持优秀青年科学基金项目**（T2322027，200万元）：这是国家自然科学基金中极具竞争力的人才类项目，表明其已进入国内青年科学家的顶尖行列。
+                - 主持完成专项项目“国家自然科学基金成果开放共享政策与平台架构设计研究”（L1924075），显示其不仅关注技术实现，也参与科研管理与政策研究。
+                - 参与重点项目“面向领域大数据的知识图谱构建”（61836013，288万元），体现其在团队中的核心地位。
+
+                这些项目经历表明，杜一不仅具备扎实的技术研发能力，还具有跨学科合作和系统性平台建设的经验。
+
+                ---
+
+                ### 三、学术影响力与引用指标（基于Google Scholar）
+
+                通过权威工具确认其Google Scholar ID为 `DMibRrYAAAAJ`，其学术影响力如下：
+
+                - **总被引次数**：1,064次
+                - **近五年被引次数**：787次（占比高达74%），说明其研究成果近年来持续受到广泛关注。
+                - **h指数**：18（近五年h指数为16），表明其已有相当数量的高影响力论文。
+                - **i10指数**：31（近五年30篇被引≥10的文章），进一步验证其产出的稳定性和质量。
+
+                引用趋势分析显示，自2019年起引用数稳步上升，2023年达144次，2024年已达210次（截至当前统计），呈现加速增长态势，学术影响力正处于快速上升期。
+
+                ---
+
+                ### 四、代表性研究成果分析
+
+                #### 1. **IEEE TKDE 2023 论文：Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification**
+                - 发表于**IEEE Transactions on Knowledge and Data Engineering**（TKDE），CCF A类期刊，人工智能与数据挖掘领域的顶级刊物。
+                - 该工作针对国家自然科学基金项目评审中的跨学科课题分类难题，提出基于层次化Transformer与图神经网络的联合模型HIRPCN，实现了自动化、精准化的主题路径识别。
+                - 被引19次（Google Scholar），并被IEEE Xplore收录，具有较强的实际应用价值，服务于国家级科研管理决策支持系统。
+                - 显示出其将AI技术应用于真实世界复杂场景的能力。
+
+                #### 2. **ACL 2023 Demo Paper: Autodive: An Integrated Onsite Scientific Literature Annotation Tool**
+                - 发表于自然语言处理顶会ACL的Demo轨道，虽非长文，但体现了其在**工具系统开发与科研基础设施建设**方面的贡献。
+                - Autodive是一个集成化的PDF文献标注工具，支持自动标注、本体管理、任务统计等功能，显著提升科学家标注效率。
+                - 已开源（GitHub）并提供在线演示，具备良好的可复用性与推广潜力。
+                - 被引5次，短期内已有一定关注，未来可能成为领域内常用工具之一。
+
+                #### 3. 其他重要成果
+                - 在知识图谱构建、作者消歧、科学数据增强等方面有多项成果发表于《情报学报》等中文权威期刊及国际会议。
+                - 拥有多项专利，如“基于网络表征和语义表征的同名作者消歧方法”（中美专利），显示出其技术创新能力与知识产权意识。
+
+                ---
+
+                ### 五、研究方向与特色
+
+                杜一的研究具有鲜明的**交叉性与实用性**特征：
+                - 紧密结合**科技大数据**与**知识工程**，致力于解决科研管理、科学评价、文献智能处理等实际问题。
+                - 强调**系统构建与工具落地**，不止于算法创新，更注重形成可用的技术产品（如Autodive）。
+                - 与国家自然科学基金委有深度合作，研究成果直接服务于国家级科研治理体系，具备较高的社会价值。
+
+                ---
+
+                ### 六、优势总结
+
+                1. **学术成长迅速**：h指数18，总引超千次，近五年引用增长迅猛，处于学术活跃高峰期。
+                2. **高水平论文产出稳定**：在IEEE TKDE、ACL等顶级期刊/会议上发表论文，具备国际竞争力。
+                3. **项目经验丰富**：主持优青项目，参与重点重大项目，展现出优秀的科研规划与执行能力。
+                4. **技术落地能力强**：开发实用工具（Autodive）、申请多项专利，推动科研基础设施建设。
+                5. **研究方向契合国家战略需求**：科技大数据、知识图谱、科研诚信与评价体系等均为当前重点发展方向。
+
+                ---
+
+                ### 七、潜在不足与建议
+
+                1. **第一作者/通讯作者的顶会顶刊仍需加强**：目前部分高水平论文为合作成果，未来应进一步强化作为主导者的角色，在更高影响力的期刊（如Nature子刊、PAMI、KDD等）上独立引领研究。
+                2. **国际学术影响力有待拓展**：其合作者多集中于国内机构，国际合作网络相对有限，建议加强与海外高水平团队的合作交流。
+                3. **理论深度可进一步深化**：现有工作偏重应用与系统构建，若能在知识表示学习、因果推理等基础理论上有所突破，将更具长远竞争力。
+
+                ---
+
+                ### 八、总体评价
+
+                杜一是我国科技大数据与知识图谱领域涌现出的优秀青年学者代表。他兼具扎实的技术功底、敏锐的问题意识和出色的工程实现能力，研究成果既有理论价值又有现实意义。其主持优青项目、在CCF A类期刊发表论文、开发开源工具等一系列成就，充分证明其已具备独立领导科研团队的能力。未来若能在理论创新与国际合作方面进一步突破，有望成长为该领域的领军人才。
+
+                **综合评分：★★★★☆（4.8/5）**
+            """,
+            "social_analysis_report": "",
+            "future_influence_report": "",
+            
+            "interdisciplinary_results": ["计算机科学", "数据科学", "人工智能"],
+            "current_discipline": "",
+            "debate_results": {
+                
+                },
+            
+            "final_analysis_summary": """
+            
+            """,
+            
+            "completeness_check_result": {},
+            "is_analysis_complete": None,
+            "is_analysis_consistent": None,
+            "completeness_recommendation": "",
+            "skip_human_review": None,
+            
+            "reflection_decision": "",
+            "human_feedback": "",
+            
+            "feedback_analysis_result": {},
+            "feedback_routing_decision": "",
+            "feedback_instructions": "",
+            
+            "final_report": ""
+    }
+    # 配置线程以支持 interrupt
+    from langchain_core.runnables import RunnableConfig
+    thread_config = RunnableConfig(configurable={"thread_id": "test_thread_001"})
+    
+    # 使用 astream 而不是 ainvoke 来支持 interrupt
+    result = None
+    async for chunk in graph.astream(state, config=thread_config):
+        print(f"收到 chunk: {chunk}")
+        result = chunk
+    
+    print("\n\n")
+    print(result)
+    
+    # 检查是否有中断
+    if "__interrupt__" in result and result["__interrupt__"]:
+        print("🛑 图在人类审核点中断，等待输入...")
+        interrupt_info = result["__interrupt__"][0]
+        print(f"中断信息: {interrupt_info.value}")
+        print("\n=== 请提供您的反馈 ===")
+        
+        # 获取真实的人类输入
+        print("请输入您的反馈意见：")
+        print("- 如果分析满足要求，请输入 'approved'")
+        print("- 如果需要改进，请详细说明需要改进的方面")
+        print("- 输入完成后按回车键确认")
+        
+        human_input = input("您的反馈: ")
+        print(f"您输入的反馈: {human_input}")
+        
+        # 使用 Command.resume 恢复执行
+        resume_result = None
+        final_state = None
+        async for chunk in graph.astream(
+            Command(resume={"feedback": human_input}),
+            config=thread_config
+        ):
+            print(f"恢复执行 chunk: {chunk}")
+            resume_result = chunk
+            # 收集所有状态更新
+            if isinstance(chunk, dict):
+                for key, value in chunk.items():
+                    if key != "__interrupt__":
+                        final_state = value
+        
+        print("✅ 图执行恢复并完成")
+        if final_state and "final_report" in final_state:
+            print(f"最终报告: {final_state['final_report'][:200]}...")
+        else:
+            print("未找到最终报告")
+    else:
+        print("❌ 图执行完成但没有中断")
+        print(f"最终结果: {result.get('final_report', '无结果')}")
+    
+    #result = await debate_controller(state)
+   # print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())

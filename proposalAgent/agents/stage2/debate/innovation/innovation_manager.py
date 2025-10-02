@@ -21,12 +21,12 @@ def create_innovation_manager(llm, memory: EmbeddingMemory):
         research_body = state.get("research_report_body_summary", "")
 
         curr = state.get("current_discipline")
-        disc_code = curr[0] if isinstance(curr, tuple) and len(curr) >= 2 else ""
-        disc_name = curr[1] if isinstance(curr, tuple) and len(curr) >= 2 else ""
+        # disc_code = curr[0] if isinstance(curr, tuple) and len(curr) >= 2 else ""
+        # disc_name = curr[1] if isinstance(curr, tuple) and len(curr) >= 2 else ""
 
         debate_kind = "创新性"
         debate_results: Dict[str, Dict[str, DebateState]] = state.get("debate_results", {}) or {}
-        disc_bucket: Dict[str, DebateState] = debate_results.get(disc_name, {}) or {}
+        disc_bucket: Dict[str, DebateState] = debate_results.get(curr, {}) or {}
         inno_state: DebateState = disc_bucket.get(debate_kind, {}) or {}
 
         good_history: List[str] = list(inno_state.get("good_agent_history", []))
@@ -52,7 +52,7 @@ def create_innovation_manager(llm, memory: EmbeddingMemory):
         debate_text = "\n\n".join(debate_transcript) or "(暂无历史辩论记录)"
 
         prompt = f"""
-            你是该学科（{disc_code} {disc_name}）的项目创新性裁判。请基于双方观点与项目信息，给出清晰、可执行的最终结论。
+            你是该学科 {curr} 的项目创新性裁判。请基于双方观点与项目信息，给出清晰、可执行的最终结论。
 
             要求：
             - 先各用不超过3点总结正反双方对“创新性”的最有力论据。
@@ -84,7 +84,7 @@ def create_innovation_manager(llm, memory: EmbeddingMemory):
         new_disc_bucket[debate_kind] = new_inno_state
 
         new_debate_results = dict(debate_results)
-        new_debate_results[disc_name] = new_disc_bucket
+        new_debate_results[curr] = new_disc_bucket
 
         return {
             "debate_results": new_debate_results,

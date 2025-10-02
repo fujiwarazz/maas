@@ -20,6 +20,9 @@ class DebateState(TypedDict):
     bad_agent_history: Annotated[
         List[str], "History of the 'con' side agent's arguments"
     ]  # 反方代理的发言历史，记录所有批判性或反对性论点。
+    current_response: Annotated[
+        str, "The current result of the debate"
+    ]  # 当前辩论的结果。
     full_history: Annotated[
         List[str], "Full transcript of the debate"
     ]  # 整场辩论的完整对话记录。
@@ -54,8 +57,14 @@ class AgentState(MessagesState):
     # --- 阶段 2: 信息收集 ---
     # 每个字段都存储了对应分析节点产出的报告或关键信息。
     academic_analysis_report: Annotated[Optional[str], "Report from the academic analysis"] # 学术分析节点的产出报告。
+    academic_analysis_limit: Annotated[Optional[int], "The limit of the academic analysis"]# 学术分析节点的迭代次数限制。
+    academic_analysis_count: Annotated[Optional[int], "The count of the academic analysis"]# 学术分析节点的迭代次数计数。
     social_analysis_report: Annotated[Optional[str], "Report from the social analysis"] # 社会分析节点的产出报告。
+    social_analysis_limit: Annotated[Optional[int], "The limit of the social analysis"]# 社会分析节点的迭代次数限制。
+    social_analysis_count: Annotated[Optional[int], "The count of the social analysis"]# 社会分析节点的迭代次数计数。
     future_influence_report: Annotated[Optional[str], "Report from the future influence analysis"] # 未来影响分析节点的产出报告。
+    future_influence_limit: Annotated[Optional[int], "The limit of the future influence analysis"]# 未来影响分析节点的迭代次数限制。
+    future_influence_count: Annotated[Optional[int], "The count of the future influence analysis"]# 未来影响分析节点的迭代次数计数。
     interdisciplinary_results: Annotated[
         List[str], "List of disciplines identified for debate"
     ] # 跨学科分析节点识别出的、需要进行后续辩论的学科领域列表。
@@ -111,6 +120,12 @@ class AgentState(MessagesState):
     feedback_instructions: Annotated[
         Optional[str], "Specific instructions for the next node based on feedback analysis"
     ] # 基于反馈分析给下一个节点的具体指导意见。
+    feedback_target: Annotated[
+        Optional[str], "Current node that needs revision based on human feedback"
+    ] # 当前根据人类反馈需要重新处理的节点标识。
+    feedback_pending: Annotated[
+        Optional[bool], "Whether feedback-driven revision is in progress"
+    ] # 标记当前是否处于基于反馈的修改流程中。
 
     # --- 最终产出 ---
     final_report: Annotated[Optional[str], "The final generated report"] # 生成器节点产出的最终报告。

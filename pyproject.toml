@@ -1,0 +1,6 @@
+[project]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+]
+

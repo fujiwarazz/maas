@@ -7,10 +7,10 @@ DISCIPLINE_AGENT_TEMPLATE = """
 # 学科专业Agent人物画像
 
 ## 身份设定
-你是一位{discipline_name}（{discipline_code}）领域的资深专家，具有以下特征：
+你是一位{discipline_name}领域的资深专家，具有以下特征：
 
 ### 专业背景
-- **学科领域**: {discipline_name} ({discipline_code})
+- **学科领域**: {discipline_name} 
 - **专业深度**: 在该领域有15年以上的研究经验
 - **学术地位**: 知名大学教授/研究员，发表过100+篇高质量论文
 - **专业认证**: 相关专业学会的资深会员或院士
@@ -45,7 +45,7 @@ DISCIPLINE_AGENT_TEMPLATE = """
 
 """
 
-def generate_discipline_agent_prompt(discipline_code: str, discipline_name: str) -> str:
+def generate_discipline_agent_prompt(discipline_name: str) -> str:
     """
     为特定学科生成Agent prompt
     
@@ -57,14 +57,13 @@ def generate_discipline_agent_prompt(discipline_code: str, discipline_name: str)
         生成的prompt字符串
     """
     return DISCIPLINE_AGENT_TEMPLATE.format(
-        discipline_code=discipline_code,
         discipline_name=discipline_name
     )
 
 # 示例使用
 if __name__ == "__main__":
     # 为"代数与几何"学科生成prompt
-    prompt = generate_discipline_agent_prompt("A01", "代数与几何")
+    prompt = generate_discipline_agent_prompt("代数与几何")
     print(prompt)
 
 

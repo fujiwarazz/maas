@@ -34,15 +34,19 @@ def create_feasible_bad_agent(llm, toolkit,memory:EmbeddingMemory):
 
         
         debate_kind = "可行性"
-        _curr = state.get("current_discipline")
+        _curr:str = state.get("current_discipline")
         # 学科分类
-        _disc_name = _curr[1] if isinstance(_curr, tuple) and len(_curr) >= 2 else ""
-        _disc_code =  _curr[0] if isinstance(_curr, tuple) and len(_curr) >= 2 else ""
-        current_debate =  state.get("debate_results", {}).get(_disc_name, {}).get(debate_kind, {})
+        # _disc_name = _curr[1] if isinstance(_curr, tuple) and len(_curr) >= 2 else ""
+        # _disc_code =  _curr[0] if isinstance(_curr, tuple) and len(_curr) >= 2 else ""
+        current_debate =  state.get("debate_results", {}).get(_curr, {}).get(debate_kind, {})
         full_history = []
+        rounds = current_debate.get("debate_rounds", 1)
+        # if rounds >=3 :
+        #     return {"messages":"<FINALIZE>","debate_results": state.get("debate_results", {})}
+            
         
         
-        if _disc_name:
+        if _curr:
             full_history = current_debate.get("full_history", [])
             
         
@@ -54,8 +58,8 @@ def create_feasible_bad_agent(llm, toolkit,memory:EmbeddingMemory):
         
         curr_situation = f"{research_info}\n\n{academic_report}\n\n{research_project_apply_info}\n\n{research_body}"
         
-        if _disc_code and _disc_name:
-            role_description = generate_discipline_agent_prompt(_disc_code,_disc_name)
+        if _curr:
+            role_description = generate_discipline_agent_prompt(discipline_name=_curr)
         else:
             role_description = ""
             logger.error("缺少学科信息分类")
@@ -76,27 +80,34 @@ def create_feasible_bad_agent(llm, toolkit,memory:EmbeddingMemory):
 
             **同时你是一个项目可行性论证专家**,请根据给定的研究基础信息与正文摘要，提出**反对**该项目可行性的**反方论点**，并且对正方观点进行驳斥。
 
-            ### 输出要求：
+              ### 输出要求：
             - 以中文输出，条理清晰，分点阐述。
-            - 在开始之前，如果有正方观点，你应该先反对对方的观点，并且说明理由
-            - 每个论点应简洁明了，避免冗长。
+            - 在开始之前，如果有反方观点，你应该先反对对方的观点，并且说明理由,如果没有反方观点，那么就跳过这一步
+            - 每个论点应简洁明了，避免冗长, 同时只需要你给出你最坚定的3条论点。最后给出总结，要求字数不能过多！
             - 论点应具体且有说服力，避免泛泛而谈。
             - 不要包含反对意见或不确定的内容。
             - 不要提及任何与你角色无关的信息。
+    
 
             ### 其他要求：
             判定依据（仅作参考，不用复述）：项目背景、研究方法、数据资源、团队能力、技术路线等。
 
             ### 可用相关信息：
-            历史辩论信息: {prev_debate_str}
-            研究基础信息：{research_info}
-            项目申请正文：{research_body}
-            学术分析报告：{academic_report}
-            项目申请信息：{research_project_apply_info}
-            可供分析的历史辩论消息：{past_memory_str}
+            **历史辩论信息**: {prev_debate_str} 
+            
+            **研究基础信息**: {research_info}
+            
+            **项目申请正文**: {research_body}
+            
+            **学术分析报告**: {academic_report}
+            
+            **项目申请信息**: {research_project_apply_info}
+            
+            **可供分析的历史辩论消息**: {past_memory_str}
             
             ### 要点：
-            请聚焦于可操作性的见解和持续改进。在总结以往经验的基础上，批判性地评估各方面观点，确保每一项决策都能推动项目取得更优成果。"""
+            请聚焦于可操作性的见解和持续改进。在总结以往经验的基础上，批判性地评估各方面观点，确保每一项决策都能推动项目取得更优成果。
+            """
 
             response = llm.invoke(prompt)
             
@@ -105,7 +116,7 @@ def create_feasible_bad_agent(llm, toolkit,memory:EmbeddingMemory):
         
             argument = f"可行性反方观点: {feasible_report}"
 
-        
+            print(f"feasible_bad_agent_{_curr}",argument)
             new_full_history = full_history + [argument]
             new_bad_history = feasbile_bad_his + [argument]
             
@@ -113,11 +124,13 @@ def create_feasible_bad_agent(llm, toolkit,memory:EmbeddingMemory):
                 "full_history": new_full_history,
                 "good_agent_history": feasbile_good_his,
                 "bad_agent_history": new_bad_history,
-                "debate_rounds": current_debate.get("debate_rounds", 1),
+                "current_response":argument,
+
+                "debate_rounds": current_debate.get("debate_rounds", 1)+1,
                 "judge_summary": "",
             }
             
-            current_disc_debates = state.get("debate_results", {}).get(_disc_name, {})
+            current_disc_debates = state.get("debate_results", {}).get(_curr, {})
             new_debate_result = {
                 "可行性": new_feasible_bad_debate_state,
                 "创新性": current_disc_debates.get("创新性", {})
@@ -125,9 +138,9 @@ def create_feasible_bad_agent(llm, toolkit,memory:EmbeddingMemory):
             
             origin_debate_results = state.get("debate_results", {})
             new_debate_results = dict(origin_debate_results)  
-            new_debate_results[_disc_name] = new_debate_result
+            new_debate_results[_curr] = new_debate_result
             
-            return {"debate_results": new_debate_results}
+            return {"debate_results": new_debate_results,"messages":response.content}
 
         else:
             raise ValueError("缺少必要的研究信息或正文摘要，无法进行可行性分析。")

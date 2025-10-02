@@ -58,54 +58,59 @@ class Propagator:
         return {
             # 消息历史 - 使用正确的消息格式
             "messages": [HumanMessage(content=prompt_content)],
-            
+
             # 基本信息字段
             "filepath": filepath,
             "research_topic": [user_prompt],
             "intention_decision": "",
-            
-            # 项目结构化信息
+
+            # 项目结构化信息（Stage 1 输出占位）
             "research_structure": "",
             "research_person_info": "",
             "research_basic_info": "",
             "research_project_team_info": "",
             "research_project_apply_info": "",
             "research_report_body_summary": "",
-            
-            # 权重分布
-            "weight_distribution": {},
-            
-            # 各维度分析报告
+
+            # 权重分布 & 节点迭代配置
+            "weight_distribution": {
+                "academic_agent": 0.3,
+                "future_influence_agent": 0.3,
+                "interdisciplinary_agent": 0.2,
+                "debate_agent": 0.2,
+            },
+            "academic_analysis_limit": 3,
+            "academic_analysis_count": 0,
+            "social_analysis_limit": 2,
+            "social_analysis_count": 0,
+            "future_influence_limit": 3,
+            "future_influence_count": 0,
+
+            # 各维度分析报告（Stage 2 输出占位）
             "academic_analysis_report": "",
             "social_analysis_report": "",
             "future_influence_report": "",
-            
-            # 跨学科和辩论相关
+
+            # 跨学科与辩论（Stage 2/辩论阶段）
             "interdisciplinary_results": [],
-            "current_discipline": "",
+            "current_discipline": None,
             "debate_results": {},
-            
-            # Stage 3: 综合分析和人机交互
+
+            # Stage 3: 综合分析与输出
             "final_analysis_summary": "",
-            
-            # 完备性检查相关
             "completeness_check_result": {},
             "is_analysis_complete": None,
             "is_analysis_consistent": None,
-            "completeness_recommendation": "",
+            "completeness_recommendation": None,
             "skip_human_review": None,
-            
-            # 反思和人类审核
-            "reflection_decision": "",
+            "reflection_decision": None,
             "human_feedback": "",
-            
-            # 反馈分析相关
             "feedback_analysis_result": {},
-            "feedback_routing_decision": "",
+            "feedback_routing_decision": None,
             "feedback_instructions": "",
-            
-            # 最终产出
-            "final_report": ""
+            "feedback_target": None,
+            "feedback_pending": False,
+            "final_report": "",
         }
 
     def get_graph_args(self) -> Dict[str, Any]:

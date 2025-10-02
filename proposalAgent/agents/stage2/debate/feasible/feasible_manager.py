@@ -20,12 +20,12 @@ def create_feasible_manager(llm, memory: EmbeddingMemory):
         research_body = state.get("research_report_body_summary", "")
 
         curr = state.get("current_discipline")
-        disc_code = curr[0] if isinstance(curr, tuple) and len(curr) >= 2 else ""
-        disc_name = curr[1] if isinstance(curr, tuple) and len(curr) >= 2 else ""
+        # disc_code = curr[0] if isinstance(curr, tuple) and len(curr) >= 2 else ""
+        # disc_name = curr[1] if isinstance(curr, tuple) and len(curr) >= 2 else ""
 
         debate_kind = "可行性"
         debate_results: Dict[str, Dict[str, DebateState]] = state.get("debate_results", {}) or {}
-        disc_bucket: Dict[str, DebateState] = debate_results.get(disc_name, {}) or {}
+        disc_bucket: Dict[str, DebateState] = debate_results.get(curr, {}) or {}
         feas_state: DebateState = disc_bucket.get(debate_kind, {}) or {}
 
         good_history: List[str] = list(feas_state.get("good_agent_history", []))
@@ -51,13 +51,13 @@ def create_feasible_manager(llm, memory: EmbeddingMemory):
         debate_text = "\n\n".join(debate_transcript) or "(暂无历史辩论记录)"
 
         prompt = f"""
-            你是该学科（{disc_code} {disc_name}）的项目可行性裁判。请基于双方观点与项目信息，给出清晰、可执行的最终结论。
+            你是该学科:{curr}的项目可行性裁判。请基于双方观点与项目信息，给出清晰、可执行的最终结论。
 
             要求：
             - 先简要总结正反双方的最有力观点（各不超过3点）。
             - 给出最终判定：可行 / 部分可行 / 不可行（必须三选一）。
             - 提供判定理由（关键证据与逻辑）。
-            - 给出落实建议（需可执行，含短期行动清单）。
+            - 给出落实建议
             - 标注关键风险与缓解措施（若有）。
 
             可参考过往反思：
@@ -82,11 +82,10 @@ def create_feasible_manager(llm, memory: EmbeddingMemory):
         new_disc_bucket[debate_kind] = new_feas_state
 
         new_debate_results = dict(debate_results)
-        new_debate_results[disc_name] = new_disc_bucket
+        new_debate_results[curr] = new_disc_bucket
 
         return {
             "debate_results": new_debate_results,
-            "feasibility_decision": judge_summary,
         }
 
     return feasible_manager

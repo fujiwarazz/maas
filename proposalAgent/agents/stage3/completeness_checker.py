@@ -99,6 +99,16 @@ def create_completeness_checker_agent(llm: ChatOpenAI):
         
         try:
             content = result.content if hasattr(result, 'content') else str(result)
+            print(f"LLM 原始响应: {content}")  # 调试信息
+            
+            # 尝试清理响应内容
+            content = content.strip()
+            if content.startswith('```json'):
+                content = content[7:]
+            if content.endswith('```'):
+                content = content[:-3]
+            content = content.strip()
+            
             completeness_result = json.loads(content)
             
             state["completeness_check_result"] = completeness_result

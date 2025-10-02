@@ -139,7 +139,7 @@ baidu_util = BaiduSearchUtil()
 @tool
 def baidu_search_with_content(
     query: str, 
-    num_results: int = 10, 
+  #  num_results: int = 5, 
     depth: int = 0
 ) -> List[Dict[str, Any]]:
     """
@@ -147,7 +147,6 @@ def baidu_search_with_content(
     
     Args:
         query (str): 搜索关键词
-        num_results (int): 返回结果数量，默认10条
         depth (int): URL解析深度
             - 0: 只返回搜索结果，不解析URL内容
             - 1: 解析搜索结果中的URL内容
@@ -177,10 +176,10 @@ def baidu_search_with_content(
         results = baidu_search_with_content("机器学习", num_results=2, depth=2)
     """
     try:
-        logger.info("开始百度搜索: %s, 结果数量: %d, 解析深度: %d", query, num_results, depth)
+        logger.info("开始百度搜索: %s, 结果数量: %d, 解析深度: %d", query, 3, depth)
         
         # 执行百度搜索
-        raw_results = search(query, num_results=num_results)
+        raw_results = search(query, num_results=3)
         
         if not raw_results:
             logger.warning("搜索 '%s' 未返回任何结果", query)

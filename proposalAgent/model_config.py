@@ -12,9 +12,9 @@ TONGYI_CONFIG = {
     "quick_think_llm": "qwen-plus",
     "backend_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     # Debate and discussion settings
-    "max_debate_rounds": 1,
-    "max_risk_discuss_rounds": 1,
-    "max_recur_limit": 30,
+    "max_debate_rounds": 3,
+    "max_risk_discuss_rounds": 3,
+    "max_recur_limit": 3,
     # Tool settings
     # "tools": [
     #     "python_repl",

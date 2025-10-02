@@ -1,6 +1,6 @@
 from proposalAgent.graphs.proposal_graph import ProposalAgentGraph
 from proposalAgent.model_config import TONGYI_CONFIG
-
+import asyncio
 
 # Create a custom config
 config = TONGYI_CONFIG.copy()
@@ -9,14 +9,17 @@ config = TONGYI_CONFIG.copy()
 # config["deep_think_llm"] = "gemini-2.5-flash"  # Use a different model
 # config["quick_think_llm"] = "gemini-2.5-flash"  # Use a different model
 # config["max_debate_rounds"] = 1  # Increase debate rounds
-config["online_tools"] = True  # Increase debate rounds
 
-# Initialize with custom config
-ta = ProposalAgentGraph(debug=True, config=config)
 
-# forward propagate
-_, decision = ta.propagate("NVDA", "2024-05-10")
-print(decision)
+async def main():
+    # Initialize with custom config
+    ta = ProposalAgentGraph(config=config)
+
+    decision = await ta.evaluate_project(user_prompt="请分析这个项目",user_interests=["技术可行性","社会影响","创新性","学术性"],filepath="/Users/peelsannaw/Desktop/codes/maas/mas4proposal/data/提交版本.pdf")
+    print(decision)
 
 # Memorize mistakes and reflect
 # ta.reflect_and_remember(1000) # parameter is the position returns
+
+if __name__ == "__main__":
+    asyncio.run(main())

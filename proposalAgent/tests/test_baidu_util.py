@@ -7,22 +7,23 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'proposalAgent/tools'))
 
-from baidu_util import baidu_search_with_content, simple_baidu_search
+from proposalAgent.tools.baidu_util import baidu_search_with_content
 
-def test_simple_search():
-    """测试简单搜索功能"""
-    print("=== 测试简单搜索功能 ===")
-    results = simple_baidu_search.invoke({"query": "deepseek", "num_results": 3})
+# def test_simple_search():
+#     """测试简单搜索功能"""
+#     print("=== 测试简单搜索功能 ===")
+#     results = simple_baidu_search.invoke({"query": "deepseek", "num_results": 3})
     
-    if results:
-        for i, result in enumerate(results):
-            print(f"\n结果 {i+1}:")
-            print(f"标题: {result.get('title', 'N/A')}")
-            print(f"摘要: {result.get('abstract', 'N/A')[:100]}...")
-            print(f"URL: {result.get('url', 'N/A')}")
-            print(f"排名: {result.get('rank', 'N/A')}")
-    else:
-        print("未找到搜索结果")
+#     if results:
+#         for i, result in enumerate(results):
+#             print(f"\n结果 {i+1}:")
+#             print(f"标题: {result.get('title', 'N/A')}")
+#             print(f"摘要: {result.get('abstract', 'N/A')[:100]}...")
+#             print(f"URL: {result.get('url', 'N/A')}")
+#             print(f"排名: {result.get('rank', 'N/A')}")
+#     else:
+#         print("未找到搜索结果")
+
 
 def test_search_with_content():
     """测试带内容解析的搜索功能"""
@@ -74,7 +75,7 @@ def test_deep_search():
 
 if __name__ == "__main__":
     try:
-        test_simple_search()
+  #      test_simple_search()
         test_search_with_content()
         test_deep_search()
         print("\n=== 测试完成 ===")

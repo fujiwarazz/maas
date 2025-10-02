@@ -1,6 +1,8 @@
 
+import asyncio
+import uuid
 from datetime import date
-from typing import Dict, Any, List, Optional, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -14,13 +16,14 @@ from proposalAgent.model_config import TONGYI_CONFIG
 from proposalAgent.agents.utils.memory import EmbeddingMemory
 from proposalAgent.utils.logger import get_logger
 from proposalAgent.tools.academic_analysis.google_scholar import get_article_brief, resolve_author_candidates, get_author_citations, get_author_citations_auto, get_author_articles_citations
-from proposalAgent.tools.academic_analysis.wos_util import wos_expanded_search, wos_expanded_citation_fanout, wos_citation_influence_summary
+# from proposalAgent.tools.academic_analysis.wos_util import wos_expanded_search, wos_expanded_citation_fanout, wos_citation_influence_summary
 from proposalAgent.tools.secondary_discipline_rag import secondary_discipline_search
+from proposalAgent.tools.baidu_util import baidu_search_with_content
 
-from .conditional_logic import ConditionalLogic
-from .setup import GraphSetup
-from .propagation import Propagator
-from .reflection import Reflector
+from proposalAgent.graphs.setup import GraphSetup
+from proposalAgent.graphs.conditional_logic import ConditionalLogic
+from proposalAgent.graphs.propagation import Propagator
+from proposalAgent.graphs.reflection import Reflector
 
 logger = get_logger("ProposalAgentGraph")
 
@@ -49,22 +52,18 @@ class ProposalAgentGraph:
         self.config = config or TONGYI_CONFIG
         logger.info("初始化ProposalAgentGraph，使用LLM提供商: %s", self.config['llm_provider'])
         
-        # 初始化LLM模型
         self._initialize_llms()
         
-        # 初始化工具包
         self.toolkit = Toolkit(config=self.config)
         
-        # 初始化记忆系统
         self._initialize_memories()
         
-        # 创建工具节点
         self.tool_nodes = self._create_tool_nodes()
         
-        # 初始化条件逻辑
         self.conditional_logic = ConditionalLogic()
+        if getattr(self.conditional_logic, "max_debate_rounds", 1) < 3:
+            self.conditional_logic.max_debate_rounds = 3
         
-        # 创建图
         self.graph_setup = GraphSetup(
             quick_thinking_llm=self.quick_thinking_llm,
             deep_think_llm=self.deep_thinking_llm,
@@ -166,160 +165,258 @@ class ProposalAgentGraph:
                 ]),
             "social": ToolNode([]),
             "influence": ToolNode([
+                baidu_search_with_content,
                 ]),
             "interdisciplinary": ToolNode([secondary_discipline_search]),
             "feasibility": ToolNode([]),
             "innovation": ToolNode([]),
         }
     
-    def evaluate_project(
-        self, 
-        user_prompt: str, 
-        user_interests: Optional[List[str]] = None, 
-        filepath: str = "",
-        thread_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        执行项目评估，支持interrupt API进行人机交互
+    @staticmethod
+    def _run_sync(awaitable: asyncio.coroutines.iscoroutine) -> Any:
+        try:
+            return asyncio.run(awaitable)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                return loop.run_until_complete(awaitable)
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
+    def _build_thread_config(
+        self, thread_id: Optional[str] = None, recursion_limit: Optional[int] = None
+    ) -> Tuple[str, Dict[str, Any]]:
         
-        Args:
-            user_prompt: 用户的项目评估请求
-            user_interests: 用户关注的评估重点列表
-            filepath: 项目文档路径
-            thread_id: 线程ID，用于支持interrupt恢复
-            
-        Returns:
-            Dict包含评估结果，如果发生中断则包含中断信息
-        """
+        if thread_id is None:
+            thread_id = f"evaluation_{uuid.uuid4().hex}"
+        config: Dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        limit = recursion_limit or self.propagator.max_recur_limit
+        config["config"] = {"recursion_limit": limit}
+        return thread_id, config
+
+    def create_session(
+        self, thread_id: Optional[str] = None, recursion_limit: Optional[int] = None
+    ) -> Tuple[str, Dict[str, Any]]:
+        return self._build_thread_config(thread_id, recursion_limit)
+
+    async def stream_project(
+        self,
+        initial_state: Dict[str, Any],
+        thread_config: Dict[str, Any],
+        feedback_handler: Optional[Callable[[Any], Awaitable[Optional[str]]]] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        payload: Union[Dict[str, Any], Command] = initial_state
+        final_state: Optional[Dict[str, Any]] = None
+
+        while True:
+            stream = self.graph.astream(payload, config=thread_config)
+            async for chunk in stream:
+                if cancel_event and cancel_event.is_set():
+                    self.curr_state = final_state
+                    return
+
+                if isinstance(chunk, dict):
+                    final_state = chunk
+
+                interrupt = chunk.get("__interrupt__") if isinstance(chunk, dict) else None
+                if interrupt:
+                    yield {"__interrupt__": interrupt, "state": final_state}
+
+                    if feedback_handler is None:
+                        self.curr_state = final_state
+                        return
+
+                    feedback = await feedback_handler(interrupt[0])
+                    if feedback is None:
+                        self.curr_state = final_state
+                        return
+
+                    payload = Command(resume={"feedback": feedback})
+                    break
+            else:
+                self.curr_state = final_state
+                if final_state is not None:
+                    yield {"state": final_state}
+                return
+
+    async def evaluate_project(
+        self,
+        user_prompt: str,
+        user_interests: Optional[List[str]] = None,
+        filepath: str = "",
+        thread_id: Optional[str] = None,
+        feedback_handler: Optional[Callable[[Any], Awaitable[Optional[str]]]] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> Dict[str, Any]:
         if user_interests is None:
             user_interests = []
-            
-        if thread_id is None:
-            thread_id = f"evaluation_{hash(user_prompt)}_{date.today().isoformat()}"
-        
-        # 创建初始状态
+
+        thread_id, thread_config = self._build_thread_config(thread_id)
+
         initial_state = self.propagator.create_initial_state(
             user_prompt=user_prompt,
             user_interest=user_interests,
-            filepath=filepath
+            filepath=filepath,
         )
-        
-        # 配置线程
-        thread_config = {"configurable": {"thread_id": thread_id}}
-        
+
         logger.info("开始项目评估，线程ID: %s", thread_id)
-        
+
         try:
-            # 执行图
-            result = self.graph.invoke(initial_state, config=thread_config)
-            
-            # 检查是否有中断
-            if "__interrupt__" in result and result["__interrupt__"]:
-                logger.info("检测到人类审核中断")
-                interrupt_info = result["__interrupt__"][0]
-                
-                return {
-                    "status": "interrupted",
-                    "thread_id": thread_id,
-                    "interrupt_info": interrupt_info.value,
-                    "message": "评估流程已暂停，等待人类审核",
-                    "partial_result": {
-                        key: value for key, value in result.items() 
-                        if not key.startswith("__")
-                    }
-                }
-            else:
-                logger.info("项目评估完成")
-                self.curr_state = result
-                
-                return {
-                    "status": "completed",
-                    "thread_id": thread_id,
-                    "final_report": result.get("final_report", ""),
-                    "analysis_summary": result.get("final_analysis_summary", ""),
-                    "academic_analysis": result.get("academic_analysis_report", ""),
-                    "social_analysis": result.get("social_analysis_report", ""),
-                    "future_influence": result.get("future_influence_report", ""),
-                    "debate_results": result.get("debate_results", {}),
-                    "full_result": result
-                }
-                
+            result = await self.graph.ainvoke(initial_state, config=thread_config)
+
+            while "__interrupt__" in result and result["__interrupt__"]:
+                if cancel_event and cancel_event.is_set():
+                    logger.info("接收到取消信号，终止评估 (thread_id=%s)", thread_id)
+                    return {"status": "cancelled", "thread_id": thread_id}
+
+                interrupt_payload = result["__interrupt__"][0]
+                payload_value = getattr(interrupt_payload, "value", interrupt_payload)
+
+                if feedback_handler:
+                    human_input = await feedback_handler(payload_value)
+                    if human_input is None:
+                        logger.info("反馈处理器返回 None，终止评估 (thread_id=%s)", thread_id)
+                        return {"status": "cancelled", "thread_id": thread_id}
+                else:
+                    print("🛑 工作流等待人类反馈：")
+                    print(payload_value)
+                    human_input = input("请输入人类反馈（例如: approved）: ")
+
+                result = await self.graph.ainvoke(
+                    Command(resume={"feedback": human_input}),
+                    config=thread_config,
+                )
+
+            if cancel_event and cancel_event.is_set():
+                logger.info("接收到取消信号，终止评估 (thread_id=%s)", thread_id)
+                return {"status": "cancelled", "thread_id": thread_id}
+
+            self.curr_state = result
+
+            logger.info("项目评估完成")
+            return {
+                "status": "completed",
+                "thread_id": thread_id,
+                "final_report": result.get("final_report", ""),
+                "analysis_summary": result.get("final_analysis_summary", ""),
+                "academic_analysis": result.get("academic_analysis_report", ""),
+                "social_analysis": result.get("social_analysis_report", ""),
+                "future_influence": result.get("future_influence_report", ""),
+                "debate_results": result.get("debate_results", {}),
+                "full_result": result,
+            }
         except Exception as e:
             logger.error("项目评估过程中发生错误: %s", e)
             return {
                 "status": "error",
                 "thread_id": thread_id,
                 "error": str(e),
-                "message": "评估过程中发生错误"
+                "message": "评估过程中发生错误",
             }
-    
-    def resume_evaluation(
-        self, 
-        thread_id: str, 
-        human_feedback: str
+
+    def evaluate_project_sync(
+        self,
+        user_prompt: str,
+        user_interests: Optional[List[str]] = None,
+        filepath: str = "",
+        thread_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        """
-        使用人类反馈恢复评估
-        
-        Args:
-            thread_id: 要恢复的线程ID
-            human_feedback: 人类提供的反馈
-            
-        Returns:
-            Dict包含恢复后的评估结果
-        """
-        thread_config = {"configurable": {"thread_id": thread_id}}
-        
+        return self._run_sync(
+            self.evaluate_project(
+                user_prompt=user_prompt,
+                user_interests=user_interests,
+                filepath=filepath,
+                thread_id=thread_id,
+                **kwargs,
+            )
+        )
+
+    async def resume_evaluation(
+        self,
+        thread_id: str,
+        human_feedback: str,
+        feedback_handler: Optional[Callable[[Any], Awaitable[Optional[str]]]] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> Dict[str, Any]:
+        thread_id, thread_config = self._build_thread_config(thread_id)
+
         logger.info("恢复评估，线程ID: %s", thread_id)
         logger.info("人类反馈: %s...", human_feedback[:100])
-        
+
         try:
-            # 使用Command.resume恢复执行
-            result = self.graph.invoke(
+            result = await self.graph.ainvoke(
                 Command(resume={"feedback": human_feedback}),
-                config=thread_config
+                config=thread_config,
             )
-            
-            # 检查是否再次中断
-            if "__interrupt__" in result and result["__interrupt__"]:
-                logger.info("评估再次中断")
-                interrupt_info = result["__interrupt__"][0]
-                
-                return {
-                    "status": "interrupted",
-                    "thread_id": thread_id,
-                    "interrupt_info": interrupt_info.value,
-                    "message": "评估流程再次暂停，等待进一步审核",
-                    "partial_result": {
-                        key: value for key, value in result.items() 
-                        if not key.startswith("__")
-                    }
-                }
-            else:
-                logger.info("评估恢复并完成")
-                self.curr_state = result
-                
-                return {
-                    "status": "completed",
-                    "thread_id": thread_id,
-                    "final_report": result.get("final_report", ""),
-                    "analysis_summary": result.get("final_analysis_summary", ""),
-                    "academic_analysis": result.get("academic_analysis_report", ""),
-                    "social_analysis": result.get("social_analysis_report", ""),
-                    "future_influence": result.get("future_influence_report", ""),
-                    "debate_results": result.get("debate_results", {}),
-                    "human_feedback": human_feedback,
-                    "full_result": result
-                }
-                
+
+            while "__interrupt__" in result and result["__interrupt__"]:
+                if cancel_event and cancel_event.is_set():
+                    logger.info("恢复流程收到取消信号 (thread_id=%s)", thread_id)
+                    return {"status": "cancelled", "thread_id": thread_id}
+
+                interrupt_payload = result["__interrupt__"][0]
+                payload_value = getattr(interrupt_payload, "value", interrupt_payload)
+
+                if feedback_handler:
+                    human_input = await feedback_handler(payload_value)
+                    if human_input is None:
+                        logger.info("恢复流程中反馈处理器返回 None，终止")
+                        return {"status": "cancelled", "thread_id": thread_id}
+                else:
+                    print("🛑 工作流再次等待反馈：")
+                    print(payload_value)
+                    human_input = input("请输入新的反馈: ")
+
+                result = await self.graph.ainvoke(
+                    Command(resume={"feedback": human_input}),
+                    config=thread_config,
+                )
+
+            if cancel_event and cancel_event.is_set():
+                logger.info("恢复流程收到取消信号 (thread_id=%s)", thread_id)
+                return {"status": "cancelled", "thread_id": thread_id}
+
+            logger.info("评估恢复并完成")
+            self.curr_state = result
+
+            return {
+                "status": "completed",
+                "thread_id": thread_id,
+                "final_report": result.get("final_report", ""),
+                "analysis_summary": result.get("final_analysis_summary", ""),
+                "academic_analysis": result.get("academic_analysis_report", ""),
+                "social_analysis": result.get("social_analysis_report", ""),
+                "future_influence": result.get("future_influence_report", ""),
+                "debate_results": result.get("debate_results", {}),
+                "human_feedback": human_feedback,
+                "full_result": result,
+            }
         except Exception as e:
             logger.error("恢复评估过程中发生错误: %s", e)
             return {
                 "status": "error",
                 "thread_id": thread_id,
                 "error": str(e),
-                "message": "恢复评估过程中发生错误"
+                "message": "恢复评估过程中发生错误",
             }
+
+    def resume_evaluation_sync(
+        self,
+        thread_id: str,
+        human_feedback: str,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        return self._run_sync(
+            self.resume_evaluation(
+                thread_id=thread_id,
+                human_feedback=human_feedback,
+                **kwargs,
+            )
+        )
     
     def get_evaluation_status(self, thread_id: str) -> Dict[str, Any]:
         """

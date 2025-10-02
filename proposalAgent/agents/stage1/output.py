@@ -1,11 +1,9 @@
 
 
-from langgraph.prebuilt import ToolNode
-from langgraph.graph import StateGraph, END,START
-from typing import Dict, Any, Generator, AsyncGenerator
-from langgraph.graph import MessagesState
+from typing import Generator, AsyncGenerator
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
+from langchain_core.messages import AIMessage
 import json
 import asyncio
 from proposalAgent.agents.utils.agent_utils import get_user_query
@@ -113,11 +111,11 @@ def create_output_node(llm):
         result = llm.invoke(prompt)
 
         
-        current_messages = state.get("messages", [])
-        new_messages = current_messages + [result.content]
+        # 创建 AIMessage 对象而不是直接使用字符串
+        ai_message = AIMessage(content=result.content)
         
         return {
-            "messages": new_messages
+            "messages": ai_message
         }
     node = get_output_node
     return node

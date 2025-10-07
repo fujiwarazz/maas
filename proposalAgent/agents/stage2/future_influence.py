@@ -7,6 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from datetime import datetime
+import math
 from typing import Optional
 from proposalAgent.agents.utils.memory import EmbeddingMemory
 
@@ -30,7 +31,7 @@ def create_future_influence_agent(llm, toolkit):
             # 获取未来影响力分析工具
             tools = [baidu_search_with_content]
 
-            future_influence_limit = state.get("future_influence_limit", 0)
+            future_influence_limit = math.ceil(state.get("weight_distribution", {}).get("future_influence_agent", 0.2) or 0.2 * state.get("future_influence_limit", 0))
             future_influence_count = state.get("future_influence_count", 0)
 
             system_message = (

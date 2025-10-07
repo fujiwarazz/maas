@@ -48,7 +48,6 @@ from proposalAgent.agents.stage3.final_analysis import create_final_analyst_agen
 from proposalAgent.agents.stage3.completeness_checker import (
     create_completeness_checker_agent,
 )
-from proposalAgent.agents.stage3.generator import create_generator_agent
 from proposalAgent.agents.utils.memory import EmbeddingMemory
 from proposalAgent.agents.utils.agent_utils import create_msg_delete
 from .conditional_logic import ConditionalLogic
@@ -150,7 +149,6 @@ class GraphSetup:
             self.deep_think_llm
         )
         feedback_analysis_node = create_feedback_analysis_agent(self.deep_think_llm)
-        generator_node = create_generator_agent(self.deep_think_llm)
 
         # Academic subgraph
         academic_workflow = StateGraph(AgentState)
@@ -350,7 +348,6 @@ class GraphSetup:
         workflow.add_node("final_analyst_node", final_analyst_node)
         workflow.add_node("completeness_checker_node", completeness_checker_node)
         workflow.add_node("feedback_analysis_node", feedback_analysis_node)
-        workflow.add_node("generator_node", generator_node)
         workflow.add_node("feasible_good_node", feasible_good_node)
         workflow.add_node("feasible_bad_node", feasible_bad_node)
         workflow.add_node("feasible_judge_node", feasible_manager_node)
@@ -433,7 +430,10 @@ class GraphSetup:
         workflow.add_conditional_edges(
             "intention_node",
             self.conditional_logic.should_output,
-            {"output_node": "output_node", "structure_node": "structure_node"},
+            {
+                "output_node": "output_node",
+                "structure_node": "structure_node",
+            },
         )
         workflow.add_edge("output_node", END)
         workflow.add_edge("structure_node", "planning_node")
@@ -463,7 +463,7 @@ class GraphSetup:
             "completeness_checker_node",
             _route_after_completeness,
             {
-                "generate": "generator_node",
+                "generate": END,
                 "human_review": "human_review_node",
             },
         )
@@ -472,7 +472,7 @@ class GraphSetup:
             "human_review_node",
             _route_after_human_review,
             {
-                "generate": "generator_node",
+                "generate": END,
                 "feedback_analysis": "feedback_analysis_node",
             },
         )
@@ -485,11 +485,9 @@ class GraphSetup:
                 "future_influence": "future_influence_node",
                 "interdisciplinary": "interdisciplinary_node",
                 "debate": "debate_controller",
-                "generate": "generator_node",
+                "generate": END,
             },
         )
-
-        workflow.add_edge("generator_node", END)
 
         checkpointer = MemorySaver()
 

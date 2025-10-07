@@ -78,7 +78,6 @@ def create_structure_node():
         res = get_genai_output(prompt,filepath)
         print(f"DEBUG_structure_node: {res}")
         
-        # 更安全的JSON清理逻辑
         if res.startswith("```json"):
             res = res.split("```json")[1]
         if res.startswith("```"):
@@ -86,7 +85,6 @@ def create_structure_node():
         if res.endswith("```"):
             res = res.split("```")[0]
         
-        # 去除首尾空白字符
         res = res.strip()
         
         try:
@@ -94,7 +92,6 @@ def create_structure_node():
         except json.JSONDecodeError as e:
             print(f"JSON解析错误: {e}")
             print(f"问题数据: {res}...")
-            # 如果JSON解析失败，返回默认结构
             result_items = {
                 "research_person_info": "",
                 "research_project_team_info": "",

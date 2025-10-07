@@ -210,7 +210,7 @@ class ProposalAgentGraph:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         payload: Union[Dict[str, Any], Command] = initial_state
         final_state: Optional[Dict[str, Any]] = None
-
+       
         while True:
             stream = self.graph.astream(payload, config=thread_config)
             async for chunk in stream:

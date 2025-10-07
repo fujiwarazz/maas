@@ -9,6 +9,7 @@ def create_generator_agent(llm: ChatOpenAI):
     """
     创建最终报告生成智能体，用于综合所有分析信息生成最终的评价报表。
     该智能体会整合所有前置分析的结果，生成一份完整的项目评估报告。
+    支持流式输出，实时生成报告内容。
     """
 
     prompt = ChatPromptTemplate.from_messages(
@@ -106,9 +107,9 @@ def create_generator_agent(llm: ChatOpenAI):
     #                 项目申请信息：{research_project_apply_info}
     #                 报告主体摘要：{research_report_body_summary}
 
-    def generator_node(state: AgentState):
+    async def generator_node(state: AgentState):
         """
-        报告生成节点的执行函数
+        报告生成节点的执行函数 - 支持流式输出
         """
         # 准备输入数据
         input_data = {
@@ -145,15 +146,32 @@ def create_generator_agent(llm: ChatOpenAI):
             "human_feedback": state.get("human_feedback", "无人类反馈"),
         }
 
-        # 调用LLM生成报告
+        # 使用流式调用LLM生成报告
         chain = prompt | llm
-        result = chain.invoke(input_data)
+        final_report_chunks = []
+        
+        print("=== 开始流式生成最终评估报告 ===")
+        
+        # 检查是否有流式生成的回调函数
+        stream_callback = state.get("_stream_callback")
+        
+        async for chunk in chain.astream(input_data):
+            if hasattr(chunk, "content") and chunk.content:
+                content = chunk.content
+                final_report_chunks.append(content)
+                
+                # 如果有流式回调，发送chunk
+                if stream_callback:
+                    await stream_callback("report_delta", {
+                        "delta": content,
+                        "type": "report_generation"
+                    })
+                
+                print(content, end="", flush=True)
 
-        # 更新状态
-        final_report_content = (
-            result.content if hasattr(result, "content") else str(result)
-        )
-        state["final_report"] = cast(str, final_report_content)
+        # 合并所有chunks为完整报告
+        final_report_content = "".join(final_report_chunks)
+        state["final_report"] = final_report_content
 
         # 添加生成消息到消息历史
         state["messages"].append(
@@ -162,8 +180,15 @@ def create_generator_agent(llm: ChatOpenAI):
             )
         )
 
-        print("=== 最终评估报告已生成 ===")
+        print("\n=== 最终评估报告生成完成 ===")
         print(f"报告长度: {len(final_report_content)} 字符")
+
+        # 发送完成信号
+        if stream_callback:
+            await stream_callback("report_complete", {
+                "report": final_report_content,
+                "length": len(final_report_content)
+            })
 
         return state
 

@@ -36,7 +36,9 @@ def create_interdis_agent(llm, toolkit):
 
 
             研究基础信息：{research_info}
+            研究正文摘要：{research_body}
             工具信息：{tool_names}
+
             """
             llm_with_tools = llm.bind_tools(tools)
             prompt = ChatPromptTemplate.from_messages(
@@ -50,7 +52,7 @@ def create_interdis_agent(llm, toolkit):
             )
 
             prompt = prompt.partial(research_info=research_info)
-           # prompt = prompt.partial(research_body=research_body)
+            prompt = prompt.partial(research_body=research_body)
             prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
 
             chain = prompt | llm_with_tools

@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from datetime import datetime
+import math
 from typing import Optional
 from proposalAgent.agents.utils.memory import EmbeddingMemory
 from proposalAgent.tools.academic_analysis.google_scholar import get_article_brief, resolve_author_candidates, get_author_citations, get_author_citations_auto, get_author_articles_citations
@@ -25,9 +26,7 @@ def create_academic_agent(llm, toolkit,memory:Optional[EmbeddingMemory]=None):
                      ]
             
             current_count = state.get("academic_analysis_count", 0)
-            academic_analysis_limit = state.get("academic_analysis_limit", 0) * state.get("weight_distribution", {}).get("academic_agent", 0) or 0
-            
-
+            academic_analysis_limit = max(math.ceil(state.get("weight_distribution", {}).get("academic_agent", 0.2) or 0.2 * state.get("academic_analysis_limit", 0)),1)
             system_message = (
                 "你是一个专业的学术分析专家，负责对学术申请书中的项目团队成员进行深度的学术背景调研和能力评估。"
                 "你的任务是使用Google Scholar,Web of Science等学术工具，全面分析项目申请人的学术能力、科研背景、学术影响力等关键指标。"
@@ -47,6 +46,7 @@ def create_academic_agent(llm, toolkit,memory:Optional[EmbeddingMemory]=None):
                         "不要尝试调用可能失败的复杂工具，优先生成实用的分析报告。"
                         "如果你或其他助手已经完成了最终的学术分析报告，请在回复前加上'最终学术分析报告：'标识。"
                         "你可以使用以下工具：{tool_names}。\n{system_message}"
+                        "申请人信息：{application_info}"
                         "项目团队信息：{person_info}"
                         "当前学术分析次数：{current_count}，调用工具次数上限:{academic_analysis_limit}"
                     ),
@@ -57,6 +57,7 @@ def create_academic_agent(llm, toolkit,memory:Optional[EmbeddingMemory]=None):
             prompt = prompt.partial(system_message=system_message)
             prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
             prompt = prompt.partial(person_info=state["research_person_info"])
+            prompt = prompt.partial(application_info=state["research_project_apply_info"])
             prompt = prompt.partial(current_count=current_count)
             prompt = prompt.partial(academic_analysis_limit=academic_analysis_limit)
 

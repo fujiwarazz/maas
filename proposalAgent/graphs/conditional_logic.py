@@ -116,17 +116,17 @@ class ConditionalLogic:
         academic_analysis_count = state.get("academic_analysis_count", 0)
         academic_analysis_weight = state.get("weight_distribution", {}).get("academic_agent", 0.2) or 0.2
         max_iter = math.ceil(academic_analysis_weight * academic_analysis_limit)
-        if state.get("feedback_pending") and state.get("feedback_target") == "academic_analysis_node":
-            return "msg_clear_academic"
+        
         if last is None:
+            # if state.get("feedback_pending") and state.get("feedback_target") == "academic_analysis_node":
+            #     return "final_analyst_node"
             return "msg_clear_academic"
         if self._has_tool_calls(last):
             return "tools_academic"
         if academic_analysis_count > max_iter:
+            # if state.get("feedback_pending") and state.get("feedback_target") == "academic_analysis_node":
+            #     return "final_analyst_node"
             return "msg_clear_academic"
-        
-        # if self._is_finalize_signal(getattr(last, "content", "")):
-        #     return "final_analyst_node"
         
         return "msg_clear_academic"
 

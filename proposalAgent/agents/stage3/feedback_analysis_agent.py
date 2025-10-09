@@ -36,7 +36,6 @@ def create_feedback_analysis_agent(llm: ChatOpenAI):
             - "academic_analysis": 重新进行学术分析
             - "social_analysis": 重新进行社会分析  
             - "future_influence": 重新进行未来影响分析
-            - "interdisciplinary": 重新进行跨学科分析
             - "debate": 重新进行辩论环节
             - "generate": 直接生成最终报告（如果反馈正面且无需修改）
             

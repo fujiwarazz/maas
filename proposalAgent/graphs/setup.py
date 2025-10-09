@@ -218,6 +218,32 @@ class GraphSetup:
             merged_state["messages"] = state.get("messages")
             return merged_state
 
+        async def rerun_academic_subgraph(state: AgentState):
+            subgraph_state = copy.deepcopy(state)
+            result = await compiled_academic_graph.ainvoke(subgraph_state)
+
+            merged_state = copy.deepcopy(state)
+            for key, value in result.items():
+                if key == "messages":
+                    continue
+                merged_state[key] = value
+
+            merged_state["messages"] = state.get("messages")
+            return merged_state
+
+        async def rerun_future_influence_subgraph(state: AgentState):
+            subgraph_state = copy.deepcopy(state)
+            result = await compiled_future_influence_graph.ainvoke(subgraph_state)
+
+            merged_state = copy.deepcopy(state)
+            for key, value in result.items():
+                if key == "messages":
+                    continue
+                merged_state[key] = value
+
+            merged_state["messages"] = state.get("messages")
+            return merged_state
+
         # Feasibility debate subgraph
         feasibility_debate_workflow = StateGraph(AgentState)
         feasibility_debate_workflow.add_node("feasible_good_node", feasible_good_node)
@@ -342,6 +368,10 @@ class GraphSetup:
             "interdisciplinary_msg_clear_node", interdisciplinary_msg_clear_node
         )
         workflow.add_node("stage2_parallel_node", stage2_parallel_runner)
+        workflow.add_node("academic_subgraph_node", rerun_academic_subgraph)
+        workflow.add_node(
+            "future_influence_subgraph_node", rerun_future_influence_subgraph
+        )
 
         workflow.add_node("debate_controller", debate_controller)
 
@@ -481,8 +511,8 @@ class GraphSetup:
             "feedback_analysis_node",
             _route_after_feedback,
             {
-                "academic_analysis": "academic_analysis_node",
-                "future_influence": "future_influence_node",
+                "academic_analysis": "academic_subgraph_node",
+                "future_influence": "future_influence_subgraph_node",
                 "interdisciplinary": "interdisciplinary_node",
                 "debate": "debate_controller",
                 "generate": END,

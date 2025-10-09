@@ -12,7 +12,49 @@ from typing import Optional, List, Dict, Any, Tuple
 import os
 from pydantic import BaseModel, Field
 from serpapi import GoogleSearch  # pip install google-search-results
+# =============================
+# 论文简要信息
+# =============================
+class ArticleBriefInput(BaseModel):
+    query: str = Field(..., description="论文标题（建议加引号）或关键词")
+    year_from: Optional[int] = Field(None, description="起始年份过滤 as_ylo")
+    year_to: Optional[int] = Field(None, description="结束年份过滤 as_yhi")
+    top_k: int = Field(1, ge=1, le=20, description="返回条数 [1,20]")
+    hl: str = Field("en", description="界面语言，如 zh-CN / en")
+    
+# =============================
+# 指标获取（有/无 author_id）
+# =============================
+class AuthorCitationsInput(BaseModel):
+    author_id: Optional[str] = Field(None, description="Scholar author_id（优先）")
+    name: Optional[str] = Field(None, description="无 author_id 时的姓名兜底")
+    organization: Optional[str] = Field(None, description="机构线索")
+    hl: str = Field("en", description="界面语言")
+    
+# =============================
+# 解析 author_id（核心）
+# =============================
+class ResolveAuthorInput(BaseModel):
+    name: str = Field(..., description="目标学者姓名（可中文）")
+    organization: Optional[str] = Field(None, description="机构线索（有助于消歧）")
+    alias_names: Optional[List[str]] = Field(None, description="姓名别名/英文名/拼音")
+    publication_titles: Optional[List[str]] = Field(None, description="若干代表作题名（建议提供英文题名）")
+    hl: str = Field("en", description="界面语言，如 zh-CN / en")
 
+class AuthorCitationsAutoInput(BaseModel):
+    name: str = Field(..., description="目标学者姓名（可中文）")
+    organization: Optional[str] = Field(None, description="机构线索（强烈建议提供）")
+    alias_names: Optional[List[str]] = Field(None, description="姓名别名/英文名/拼音")
+    publication_titles: Optional[List[str]] = Field(None, description="代表作题名（强烈建议至少 1 篇）")
+    hl: str = Field("en", description="界面语言")
+
+# =============================
+#  作者每篇文章被引
+# =============================
+class AuthorArticlesInput(BaseModel):
+    author_id: str = Field(..., description="Scholar author_id")
+    hl: str = Field("en", description="界面语言")
+    
 class SerpAPIScholar:
     def __init__(self, api_key: Optional[str] = None, hl: str = "en"):
         self.api_key = api_key or os.getenv("SERPAPI_API_KEY")
@@ -64,6 +106,16 @@ class SerpAPIScholar:
         params.update(kwargs)
         return GoogleSearch(params).get_dict()
 
+def _extract_author_id_from_authors(authors: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
+    pairs: List[Tuple[str, str]] = []
+    for a in authors:
+        link = (a or {}).get("profile") or (a or {}).get("link")
+        if not link:
+            continue
+        aid = _extract_author_id_from_profile_link(link)
+        if aid:
+            pairs.append(((a or {}).get("name") or "", aid))
+    return pairs
 
 
 def _extract_author_id_from_profile_link(link: str) -> Optional[str]:
@@ -198,6 +250,7 @@ def resolve_author_candidates(input: ResolveAuthorInput) -> List[Dict[str, Any]]
         if not title:
             continue
         resp = client.search_scholar(q=f'"{title}"', num=3)
+        print(resp)
         for it in resp.get("organic_results", [])[:3]:
             brief = _extract_article_brief(it)
             for cand_name, aid in _extract_author_id_from_authors(brief.get("authors") or []):
@@ -333,14 +386,6 @@ def get_author_citations(input: AuthorCitationsInput) -> Dict[str, Any]:
         "citations_by_year": graph,
     }
 
-class AuthorCitationsAutoInput(BaseModel):
-    name: str = Field(..., description="目标学者姓名（可中文）")
-    organization: Optional[str] = Field(None, description="机构线索（强烈建议提供）")
-    alias_names: Optional[List[str]] = Field(None, description="姓名别名/英文名/拼音")
-    publication_titles: Optional[List[str]] = Field(None, description="代表作题名（强烈建议至少 1 篇）")
-    hl: str = Field("en", description="界面语言")
-
-
 def get_author_citations_auto(input: AuthorCitationsAutoInput) -> Dict[str, Any]:
     cands = resolve_author_candidates(
         ResolveAuthorInput(
@@ -439,33 +484,33 @@ if __name__ == "__main__":
    
     
 
-    # print("== Resolve author demo ==")
-    # cands = resolve_author_candidates(ResolveAuthorInput(
-    #     name="杜一",
-    #     organization="中国科学院计算机网络信息中心",
-    #     alias_names=["Yi Du"],
-    #     publication_titles=[
-    #         "Autodive: An Integrated Onsite Scientific Literature Annotation Tool",
-    #         "Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification"
-    #     ],
-    #     hl="en"
-    # ))
-    # print("----------")
-    # print(json.dumps(cands, ensure_ascii=False, indent=2))
-    # print("----------")
+    print("== Resolve author demo ==")
+    cands = resolve_author_candidates(ResolveAuthorInput(
+        name="杜一",
+        organization="中国科学院计算机网络信息中心",
+        alias_names=["Yi Du"],
+        publication_titles=[
+            "Autodive: An Integrated Onsite Scientific Literature Annotation Tool",
+            "Visual analytics towards big data",
+            "Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification"
+        ],
+        hl="en"
+    ))
+    print("----------")
+    print(json.dumps(cands, ensure_ascii=False, indent=2))
+    print("----------")
 
-    # if cands:
-    #     print("== Author citations auto demo ==")
-    # ac_auto = get_author_citations_auto(AuthorCitationsAutoInput(
-    #     name="杜一",
-    #     organization="中国科学院计算机网络信息中心",
-    #     alias_names=["Yi Du"],
-    #     publication_titles=[
-    #         "Autodive: An Integrated Onsite Scientific Literature Annotation Tool",
-    #         "Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification"
-    #     ],
-    #     hl="en"
-    # ))
-    # print(json.dumps(ac_auto, ensure_ascii=False, indent=2))
+    if cands:
+        print("== Author citations auto demo ==")
+    ac_auto = get_author_citations_auto(AuthorCitationsAutoInput(
+        name="杜一",
+        organization="中国科学院计算机网络信息中心",
+        alias_names=["Yi Du"],
+        publication_titles=[
+            "Autodive: An Integrated Onsite Scientific Literature Annotation Tool",
+            "Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification"
+        ],
+        hl="en"
+    ))
+    print(json.dumps(ac_auto, ensure_ascii=False, indent=2))
     res = get_author_citations(AuthorCitationsInput(author_id="DMibRrYAAAAJ", hl="en"))
-    print(res)

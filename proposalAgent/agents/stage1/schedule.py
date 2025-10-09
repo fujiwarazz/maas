@@ -36,7 +36,7 @@ def create_schedule_agent(llm):
         用户输入：{user_question}
         用户输入的主题：{user_topic}
         智能体信息：{str(agents_info)}
-        注意：输出的权重值和要为1.0
+       
         输出格式：
         {{
             "agent_name":"weight(float)",
@@ -49,7 +49,10 @@ def create_schedule_agent(llm):
         weight_distribution = json.loads(result.content)
         for k,v in weight_distribution.items():
             if k in weight.keys():
-                weight[k] = v
+                if k == "academic_agent":
+                    weight[k] = 0.5
+                else: 
+                    weight[k] = v
             
         print(weight)
         return {

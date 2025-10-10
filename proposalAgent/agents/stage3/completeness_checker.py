@@ -52,10 +52,7 @@ def create_completeness_checker_agent(llm: ChatOpenAI):
             "human", 
             """请评估以下项目分析的完备性和自洽性：
 
-            研究主题：{research_topic}
-            研究结构：{research_structure}
             申请人信息：{research_person_info}
-            基本信息：{research_basic_info}
             项目团队信息：{research_project_team_info}
             项目申请信息：{research_project_apply_info}
             报告主体摘要：{research_report_body_summary}

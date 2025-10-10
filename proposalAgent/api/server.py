@@ -258,6 +258,9 @@ class SessionQueues:
         self.cancel_event: asyncio.Event = asyncio.Event()
         self.final_state: Optional[Dict[str, Any]] = None
         self.report_urls: Optional[Dict[str, str]] = None
+        self.final_states: Dict[str, Dict[str, Any]] = {}
+        self.report_urls_map: Dict[str, Dict[str, str]] = {}
+        self.expected_files: List[str] = []
 
 
 
@@ -386,20 +389,30 @@ async def upload_file(
 async def run_evaluation(
     graph: ProposalAgentGraph,
     request: ChatRequest,
-    thread_id: str,
-    thread_config: Dict[str, Any],
+    session_thread_id: str,
+    eval_thread_config: Dict[str, Any],
     queues: SessionQueues,
+    file_id: Optional[str] = None,
+    eval_thread_id: Optional[str] = None,
 ) -> None:
     final_state: Optional[Dict[str, Any]] = None
-    print("🔥 run_evaluation: thread_id=%s, thread_config=%s", thread_id, thread_config)
-    logger.info("run_evaluation: thread_id=%s, thread_config=%s", thread_id, thread_config)
+    log_thread_id = (
+        eval_thread_id
+        or eval_thread_config.get("configurable", {}).get("thread_id")
+        or session_thread_id
+    )
+    logger.info(
+        "run_evaluation: session_thread_id=%s, eval_thread_id=%s",
+        session_thread_id,
+        log_thread_id,
+    )
 
     async def feedback_handler(interrupt_payload: Any) -> Optional[str]:
         payload_value = getattr(interrupt_payload, "value", interrupt_payload)
         prompt = build_interrupt_prompt(final_state, payload_value)
 
         interrupt_event: Dict[str, Any] = {
-            "thread_id": thread_id,
+            "thread_id": session_thread_id,
             "prompt": prompt,
         }
 
@@ -419,21 +432,24 @@ async def run_evaluation(
                 return control.feedback or ""
 
 
+    file_id_to_use = file_id or (request.file_ids[0] if request.file_ids else "")
+
     initial_state = graph.propagator.create_initial_state(
         user_prompt=request.query,
         user_interest=request.user_interest,
-        filepath=request.file_ids[0],
+        filepath=file_id_to_use,
     )
 
     try:
+        stream_thread_id = session_thread_id
         async for chunk in graph.stream_project(
             initial_state,
-            thread_config,
+            eval_thread_config,
             feedback_handler=feedback_handler,
             cancel_event=queues.cancel_event,
         ):
             if queues.cancel_event.is_set():
-                await queues.event_queue.put(("cancelled", {"thread_id": thread_id}))
+                await queues.event_queue.put(("cancelled", {"thread_id": stream_thread_id}))
                 return
 
             if "__interrupt__" in chunk:
@@ -450,35 +466,72 @@ async def run_evaluation(
             json.dump(serializable_state, f, ensure_ascii=False)
             print(f"最终状态已保存到 final_state.json，长度: {len(serializable_state)}")
 
-        SESSION_QUEUES[thread_id].final_state = final_state
+        SESSION_QUEUES[session_thread_id].final_state = final_state
 
         try:
             report_urls = await asyncio.to_thread(
-                create_and_upload_reports, final_state, thread_id
+                create_and_upload_reports, final_state, log_thread_id
             )
-            queues.report_urls = report_urls
         except Exception as exc_upload:  # noqa: BLE001
             logger.exception("生成或上传报告文件失败: %s", exc_upload)
-            queues.report_urls = None
+            report_urls = None
 
-        await queues.event_queue.put(
-            ("stage_complete", {"thread_id": thread_id, "state": serializable_state})
-        )
-        if queues.report_urls:
+        if file_id:
+            serializable_state_with_id = {**serializable_state, "__file_id__": file_id}
+            queues.final_states[file_id] = serializable_state_with_id
+            queues.final_state = serializable_state
+            if report_urls:
+                queues.report_urls_map[file_id] = report_urls
+            if queues.expected_files and all(
+                fid in queues.final_states for fid in queues.expected_files
+            ):
+                merged_payload = {
+                    fid: queues.final_states.get(fid, {}) for fid in queues.expected_files
+                }
+                await queues.event_queue.put(
+                    (
+                        "stage_complete",
+                        {
+                            "thread_id": stream_thread_id,
+                            "states": merged_payload,
+                        },
+                    )
+                )
+                if queues.report_urls_map:
+                    await queues.event_queue.put(
+                        (
+                            "report_ready",
+                            {
+                                "thread_id": stream_thread_id,
+                                "downloads": queues.report_urls_map,
+                            },
+                        )
+                    )
+                await queues.event_queue.put(("done", {"thread_id": stream_thread_id}))
+        else:
+            queues.final_state = final_state
+            queues.report_urls = report_urls
             await queues.event_queue.put(
                 (
-                    "report_ready",
-                    {
-                        "thread_id": thread_id,
-                        "downloads": queues.report_urls,
-                    },
+                    "stage_complete",
+                    {"thread_id": stream_thread_id, "state": serializable_state},
                 )
             )
-        await queues.event_queue.put(("done", {"thread_id": thread_id}))
+            if report_urls:
+                await queues.event_queue.put(
+                    (
+                        "report_ready",
+                        {
+                            "thread_id": stream_thread_id,
+                            "downloads": report_urls,
+                        },
+                    )
+                )
+            await queues.event_queue.put(("done", {"thread_id": stream_thread_id}))
     except Exception as exc:  # noqa: BLE001
-        await queues.event_queue.put(("error", {"thread_id": thread_id, "message": str(exc)}))
-    finally:
-        SESSION_QUEUES.pop(thread_id, None)
+        await queues.event_queue.put(
+            ("error", {"thread_id": stream_thread_id, "message": str(exc)})
+        )
 
 
 
@@ -572,16 +625,141 @@ async def proposal_evaluation(
         user_message += f"\n关注点：{', '.join(request.user_interest)}"
     history.append(ChatMessage(role="user", content=user_message))
 
+    multiple_files = len(request.file_ids) > 1
+    if multiple_files:
+        queues.expected_files = list(request.file_ids)
+
     await queues.event_queue.put(("session", {"thread_id": thread_id}))
 
-    # 运行携程任务，向queue中添加chunk
-    asyncio.create_task(run_evaluation(graph, request, thread_id, thread_config, queues))
+    # 运行coro任务，向queue中添加chunk
+    if multiple_files:
+        for fid in request.file_ids:
+            per_file_request = ChatRequest(
+                file_ids=[fid],
+                query=request.query,
+                user_interest=request.user_interest,
+                thread_id=request.thread_id,
+            )
+            # fix
+            recursion_limit = thread_config.get("config", {}).get("recursion_limit")
+            per_thread_id, per_thread_config = graph.create_session(
+                recursion_limit=150,
+            )
+
+            asyncio.create_task(
+                run_evaluation(
+                    graph,
+                    per_file_request,
+                    thread_id,
+                    per_thread_config,
+                    queues,
+                    file_id=fid,
+                    eval_thread_id=per_thread_id,
+                )
+            )
+    else:
+        asyncio.create_task(
+            run_evaluation(
+                graph,
+                request,
+                thread_id,
+                thread_config,
+                queues,
+            )
+        )
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
             while True:
                 event, payload = await queues.event_queue.get()
                 if event == "stage_complete":
+                    if payload.get("states"):
+                        raw_states = {}
+                        flattened_states = {}
+                        for fid, per_state in payload["states"].items():
+                            raw_states[fid] = per_state
+                            flattened_states[fid] = flatten_state(per_state)
+
+                        prompt = ChatPromptTemplate.from_messages(
+                            [
+                                (
+                                    "system",
+                                    """你是一个资深的科研评审专家，需要对多个申报材料进行横向对比，给出全面、专业的综合评估报告。""",
+                                ),
+                                (
+                                    "human",
+                                    """请基于以下多个文件的分析结果，完成一个综合对比评估：
+                                        文件总数：{file_count}。
+                                        请先概述整体差异与共性，再逐一比较各文件在关键维度（学术分析、社会/未来影响、跨学科表现、辩论裁判结论等）的主要发现和不足，并给出推荐排序或选择建议。
+
+                                        各文件的分析摘要如下：
+                                        {formatted_states}
+                                        """,
+                                ),
+                            ]
+                        )
+
+                        formatted_lines: List[str] = []
+                        for fid, state_flat in flattened_states.items():
+                            formatted_lines.append(f"文件ID: {fid}")
+                            formatted_lines.append(
+                                f"  学术分析：{state_flat.get('academic_analysis_report', '未生成') }"
+                            )
+                            formatted_lines.append(
+                                f"  未来影响分析：{state_flat.get('future_influence_report', '未生成')}"
+                            )
+                            formatted_lines.append(
+                                f"  跨学科结果：{state_flat.get('interdisciplinary_results', [])}"
+                            )
+                            formatted_lines.append(
+                                f"  辩论结果：{_format_debate_results(state_flat.get('debate_results', {}))}"
+                            )
+                            formatted_lines.append(
+                                f"  完备性检查：{_format_completeness_result(state_flat.get('completeness_check_result', {}))}"
+                            )
+                            formatted_lines.append(
+                                f"  人类反馈：{state_flat.get('human_feedback', '无')}"
+                            )
+                            formatted_lines.append("")
+
+                        formatted_states = "\n".join(formatted_lines)
+
+                        input_data = {
+                            "file_count": len(raw_states),
+                            "formatted_states": formatted_states,
+                        }
+
+                        chain = prompt | graph.quick_thinking_llm
+                        chunks: List[str] = []
+                        async for chunk in chain.astream(input_data):
+                            delta = getattr(chunk, "content", str(chunk))
+                            if not delta:
+                                continue
+                            chunks.append(delta)
+                            yield format_sse("report_delta", {"thread_id": thread_id, "delta": delta})
+
+                        final_report = "".join(chunks)
+                        history.append(ChatMessage(role="assistant", content=final_report))
+                        CHAT_SESSIONS[thread_id] = history
+                        await queues.event_queue.put(
+                            (
+                                "multi_report_complete",
+                                {
+                                    "thread_id": thread_id,
+                                    "reports": raw_states,
+                                    "final_report": final_report,
+                                },
+                            )
+                        )
+                        yield format_sse(
+                            "report_complete",
+                            {
+                                "thread_id": thread_id,
+                                "report": final_report,
+                            },
+                        )
+                        continue
+
                     raw_state_nested = getattr(queues, "final_state", {})
                     raw_state = (
                         flatten_state(raw_state_nested)

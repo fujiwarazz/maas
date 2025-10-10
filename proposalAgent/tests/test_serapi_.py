@@ -481,27 +481,6 @@ except Exception:
 if __name__ == "__main__":
     import json
 
-   
-    
-
-    print("== Resolve author demo ==")
-    cands = resolve_author_candidates(ResolveAuthorInput(
-        name="杜一",
-        organization="中国科学院计算机网络信息中心",
-        alias_names=["Yi Du"],
-        publication_titles=[
-            "Autodive: An Integrated Onsite Scientific Literature Annotation Tool",
-            "Visual analytics towards big data",
-            "Hierarchical Interdisciplinary Topic Detection Model for Research Proposal Classification"
-        ],
-        hl="en"
-    ))
-    print("----------")
-    print(json.dumps(cands, ensure_ascii=False, indent=2))
-    print("----------")
-
-    if cands:
-        print("== Author citations auto demo ==")
     ac_auto = get_author_citations_auto(AuthorCitationsAutoInput(
         name="杜一",
         organization="中国科学院计算机网络信息中心",

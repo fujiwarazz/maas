@@ -61,7 +61,7 @@ class Propagator:
 
             # 基本信息字段
             "filepath": filepath,
-            "research_topic": [user_prompt],
+            "research_topic": user_interest,
             "intention_decision": "",
 
             # 项目结构化信息（Stage 1 输出占位）

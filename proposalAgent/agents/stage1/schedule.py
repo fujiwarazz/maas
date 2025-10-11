@@ -50,7 +50,7 @@ def create_schedule_agent(llm):
         for k,v in weight_distribution.items():
             if k in weight.keys():
                 if k == "academic_agent":
-                    weight[k] = 0.5
+                    weight[k] = 0.33
                 else: 
                     weight[k] = v
             

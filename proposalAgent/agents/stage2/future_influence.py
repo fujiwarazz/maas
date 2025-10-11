@@ -47,17 +47,18 @@ def create_future_influence_agent(llm, toolkit):
     
             )
 
+            system_template = (
+                "{system_message}"
+                "\n如果你已经完成了最终的未来影响力分析报告，请在回复前加上'最终未来影响力分析报告：'标识。"
+                "你可以使用以下工具：{tool_names}"
+                "\n\n项目信息：{project_info}"
+                "\n\n研究人员信息：{person_info}"
+                "\n\n项目申请信息：{application_info}"
+                "\n\n当前未来影响力分析次数：{current_count}，调用工具次数上限:{future_influence_limit}"
+            )
+
             prompt = ChatPromptTemplate.from_messages([
-                (
-                    "system",
-                    "{system_message}",
-                    "如果你已经完成了最终的未来影响力分析报告，请在回复前加上'最终未来影响力分析报告：'标识。"
-                    "你可以使用以下工具：{tool_names}"
-                    "\n\n项目信息：{project_info}"
-                    "\n\n研究人员信息：{person_info}"
-                    "\n\n项目申请信息：{application_info}"
-                    "\n\n当前未来影响力分析次数：{current_count}，调用工具次数上限:{future_influence_limit}"
-                ),
+                ("system", system_template),
                 MessagesPlaceholder(variable_name="messages"),
             ])
                         

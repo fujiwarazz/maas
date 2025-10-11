@@ -2,6 +2,7 @@
 # 不用tool的单agent
 # 1、制定学科的可信性分析
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessage
 import time
 import json
 from datetime import datetime
@@ -69,7 +70,7 @@ def create_innovation_good_agent(llm, toolkit,memory:EmbeddingMemory):
 
             **同时你是一个项目创新性论证专家**,请根据给定的研究基础信息与正文摘要，提出**支持**该项目创新性的**正方论点**，并且对反方观点进行驳斥。
 
-              ### 输出要求：
+            ### 输出要求：
             - 以中文输出，条理清晰，分点阐述。
             - 在开始之前，如果有反方观点，你应该先反对对方的观点，并且说明理由,如果没有反方观点，那么就跳过这一步
             - 每个论点应简洁明了，避免冗长, 同时只需要你给出你最坚定的3条论点。最后给出总结，要求字数不能过多！
@@ -80,6 +81,12 @@ def create_innovation_good_agent(llm, toolkit,memory:EmbeddingMemory):
 
             ### 其他要求：
             判定依据（仅作参考，不用复述）：项目背景、研究方法、数据资源、团队能力、技术路线等。
+
+            ### 安全与合规要求：
+            - 内容必须符合中国法律法规与伦理规范。
+            - 禁止输出涉黄、涉暴、涉恐、涉政等敏感或不当信息。
+            - 避免出现个人隐私（如身份证号、手机号、住址等），对敏感字段进行脱敏或忽略。
+            - 如无法在安全范围内生成内容，请明确说明原因，不要尝试绕过限制。
 
             ### 可用相关信息：
             **历史辩论信息**: {prev_debate_str} 

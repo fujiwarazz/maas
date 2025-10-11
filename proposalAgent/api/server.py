@@ -9,7 +9,7 @@ import textwrap
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -252,7 +252,7 @@ def create_and_upload_reports(final_state: Optional[Dict[str, Any]], thread_id: 
     return {"report": url, "object_key": object_key}
 
 class SessionQueues:
-    def __init__(self) -> None:
+    def __init__(self, allow_multi: bool = False) -> None:
         self.event_queue: "asyncio.Queue[tuple[str, Any]]" = asyncio.Queue()
         self.control_queue: "asyncio.Queue[SessionControl]" = asyncio.Queue()
         self.cancel_event: asyncio.Event = asyncio.Event()
@@ -261,6 +261,10 @@ class SessionQueues:
         self.final_states: Dict[str, Dict[str, Any]] = {}
         self.report_urls_map: Dict[str, Dict[str, str]] = {}
         self.expected_files: List[str] = []
+        self.allow_multi = allow_multi
+        self.sub_control_queues: Dict[str, "asyncio.Queue[SessionControl]"] = {}
+        self.sub_cancel_events: Dict[str, asyncio.Event] = {}
+        self.sub_session_ids: Dict[str, str] = {}
 
 
 
@@ -325,6 +329,16 @@ def make_serializable(obj: Any) -> Any:
     return str(obj)
 
 
+def _flatten_value(value: Any) -> Any:
+    if isinstance(value, BaseMessage):
+        return make_serializable(value)
+    if isinstance(value, (list, tuple, set)):
+        return [_flatten_value(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _flatten_value(v) for k, v in value.items()}
+    return value
+
+
 def flatten_state(state: Dict[str, Any]) -> Dict[str, Any]:
     flat: Dict[str, Any] = {}
     stack = [state]
@@ -344,7 +358,7 @@ def flatten_state(state: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(value, dict):
                 stack.append(value)
             else:
-                flat[key] = value
+                flat[key] = _flatten_value(value)
 
     return flat
 
@@ -407,6 +421,12 @@ async def run_evaluation(
         log_thread_id,
     )
 
+    sub_control_queue: Optional["asyncio.Queue[SessionControl]"] = None
+    sub_cancel_event: Optional[asyncio.Event] = None
+    if file_id and queues.allow_multi:
+        sub_control_queue = queues.sub_control_queues.get(file_id)
+        sub_cancel_event = queues.sub_cancel_events.get(file_id)
+
     async def feedback_handler(interrupt_payload: Any) -> Optional[str]:
         payload_value = getattr(interrupt_payload, "value", interrupt_payload)
         prompt = build_interrupt_prompt(final_state, payload_value)
@@ -418,17 +438,36 @@ async def run_evaluation(
 
         if payload_value is not None:
             interrupt_event["payload"] = payload_value
+        if file_id:
+            interrupt_event["file_id"] = file_id
 
         await queues.event_queue.put(("interrupt", interrupt_event))
         logger.info("接收到中断事件: %s", interrupt_event)
         while True:
-            control = await queues.control_queue.get()
+            queue_to_use: "asyncio.Queue[SessionControl]"
+            if sub_control_queue is not None:
+                queue_to_use = sub_control_queue
+            else:
+                queue_to_use = queues.control_queue
+
+            control = await queue_to_use.get()
+
+            if control.file_id and file_id and control.file_id != file_id:
+                await queue_to_use.put(control)
+                await asyncio.sleep(0)
+                continue
             if control.action == "cancel":
-                queues.cancel_event.set()
+                if sub_cancel_event is not None:
+                    sub_cancel_event.set()
+                else:
+                    queues.cancel_event.set()
                 return None
 
             if control.action == "resume":
-                queues.cancel_event.clear()
+                if sub_cancel_event is not None:
+                    sub_cancel_event.clear()
+                else:
+                    queues.cancel_event.clear()
                 return control.feedback or ""
 
 
@@ -442,21 +481,34 @@ async def run_evaluation(
 
     try:
         stream_thread_id = session_thread_id
-        async for chunk in graph.stream_project(
-            initial_state,
-            eval_thread_config,
-            feedback_handler=feedback_handler,
-            cancel_event=queues.cancel_event,
-        ):
-            if queues.cancel_event.is_set():
-                await queues.event_queue.put(("cancelled", {"thread_id": stream_thread_id}))
-                return
+        stream_closed_early = False
+        try:
+            async for chunk in graph.stream_project(
+                initial_state,
+                eval_thread_config,
+                feedback_handler=feedback_handler,
+                cancel_event=sub_cancel_event or queues.cancel_event,
+            ):
+                if queues.cancel_event.is_set():
+                    await queues.event_queue.put(("cancelled", {"thread_id": stream_thread_id}))
+                    return
 
-            if "__interrupt__" in chunk:
+                if "__interrupt__" in chunk:
+                    final_state = chunk.get("state")
+                    continue
+
                 final_state = chunk.get("state")
-                continue
+        except GeneratorExit:
+            stream_closed_early = True
+            logger.info(
+                "stream_project terminated early for session %s (file_id=%s)",
+                stream_thread_id,
+                file_id,
+            )
 
-            final_state = chunk.get("state")
+        if stream_closed_early:
+            await queues.event_queue.put(("cancelled", {"thread_id": stream_thread_id}))
+            return
 
         final_state = final_state or graph.curr_state or {}
 
@@ -482,9 +534,8 @@ async def run_evaluation(
             queues.final_state = serializable_state
             if report_urls:
                 queues.report_urls_map[file_id] = report_urls
-            if queues.expected_files and all(
-                fid in queues.final_states for fid in queues.expected_files
-            ):
+        if queues.expected_files:
+            if all(fid in queues.final_states for fid in queues.expected_files):
                 merged_payload = {
                     fid: queues.final_states.get(fid, {}) for fid in queues.expected_files
                 }
@@ -611,7 +662,7 @@ async def proposal_evaluation(
         request.thread_id,
         recursion_limit=150,
     )
-    queues = SessionQueues()
+    queues = SessionQueues(allow_multi=len(request.file_ids) > 1)
     SESSION_QUEUES[thread_id] = queues
 
     # 将评估请求添加到对话历史
@@ -640,11 +691,21 @@ async def proposal_evaluation(
                 user_interest=request.user_interest,
                 thread_id=request.thread_id,
             )
-            # fix
-            recursion_limit = thread_config.get("config", {}).get("recursion_limit")
+            recursion_limit = thread_config.get("recursion_limit") or thread_config.get(
+                "config", {}
+            ).get("recursion_limit")
             per_thread_id, per_thread_config = graph.create_session(
-                recursion_limit=150,
+                recursion_limit=recursion_limit,
             )
+
+            sub_control_queue: Optional["asyncio.Queue[SessionControl]"] = None
+            sub_cancel_event: Optional[asyncio.Event] = None
+            if queues.allow_multi:
+                sub_control_queue = asyncio.Queue()
+                sub_cancel_event = asyncio.Event()
+                queues.sub_control_queues[fid] = sub_control_queue
+                queues.sub_cancel_events[fid] = sub_cancel_event
+                queues.sub_session_ids[fid] = per_thread_id
 
             asyncio.create_task(
                 run_evaluation(
@@ -690,8 +751,9 @@ async def proposal_evaluation(
                                     "human",
                                     """请基于以下多个文件的分析结果，完成一个综合对比评估：
                                         文件总数：{file_count}。
-                                        请先概述整体差异与共性，再逐一比较各文件在关键维度（学术分析、社会/未来影响、跨学科表现、辩论裁判结论等）的主要发现和不足，并给出推荐排序或选择建议。
-
+                                        请先概述整体差异与共性，再逐一比较各文件在关键维度（学术分析、社会/未来影响、跨学科表现、辩论裁判结论等）的主要发现和不足，并给出推荐排序或选择建议
+                                        注意，你是一个审核员，只能在统一批申请书内选择出最优的，不能都觉得很好，一定要做好权衡！
+                                        注意，内容一定要翔实、充分、具体，不能有任何遗漏！
                                         各文件的分析摘要如下：
                                         {formatted_states}
                                         """,
@@ -702,6 +764,7 @@ async def proposal_evaluation(
                         formatted_lines: List[str] = []
                         for fid, state_flat in flattened_states.items():
                             formatted_lines.append(f"文件ID: {fid}")
+                            formatted_lines.append(f"内容摘要{state_flat.get('research_report_body_summary', '未生成')}")
                             formatted_lines.append(
                                 f"  学术分析：{state_flat.get('academic_analysis_report', '未生成') }"
                             )
@@ -718,8 +781,9 @@ async def proposal_evaluation(
                                 f"  完备性检查：{_format_completeness_result(state_flat.get('completeness_check_result', {}))}"
                             )
                             formatted_lines.append(
-                                f"  人类反馈：{state_flat.get('human_feedback', '无')}"
+                                f"  最终分析摘要：{state_flat.get('final_analysis_summary', '无')}"
                             )
+                            
                             formatted_lines.append("")
 
                         formatted_states = "\n".join(formatted_lines)
@@ -729,7 +793,7 @@ async def proposal_evaluation(
                             "formatted_states": formatted_states,
                         }
 
-                        chain = prompt | graph.quick_thinking_llm
+                        chain = prompt | graph.deep_thinking_llm
                         chunks: List[str] = []
                         async for chunk in chain.astream(input_data):
                             delta = getattr(chunk, "content", str(chunk))
@@ -775,7 +839,7 @@ async def proposal_evaluation(
                             ),
                             (
                                 "human",
-                                """请基于以下全部分析信息，生成最终尽可能详尽的项目评估报告：\n学术分析：{academic_analysis_report}\n社会分析：{social_analysis_report}\n未来影响分析：{future_influence_report}\n跨学科分析结果：{interdisciplinary_results}\n辩论结果：{debate_results}\n最终分析摘要：{final_analysis_summary}\n完备性检查结果：{completeness_check_result}\n人类反馈：{human_feedback}""",
+                                """请基于以下全部分析信息，生成最终尽可能详尽的项目评估报告，内容要翔实充分具体！：\n学术分析：{academic_analysis_report}\n社会分析：{social_analysis_report}\n未来影响分析：{future_influence_report}\n跨学科分析结果：{interdisciplinary_results}\n辩论结果：{debate_results}\n最终分析摘要：{final_analysis_summary}\n完备性检查结果：{completeness_check_result}\n人类反馈：{human_feedback}""",
                             ),
                         ]
                     )
@@ -793,7 +857,7 @@ async def proposal_evaluation(
                         "human_feedback": raw_state.get("human_feedback", "无人类反馈"),
                     }
 
-                    chain = prompt | graph.quick_thinking_llm
+                    chain = prompt | graph.deep_thinking_llm
                     chunks: List[str] = []
                     async for chunk in chain.astream(input_data):
                         delta = getattr(chunk, "content", str(chunk))
@@ -835,13 +899,25 @@ async def chat_control(control: SessionControl) -> Dict[str, str]:
     if not queues:
         raise HTTPException(status_code=404, detail="session not found")
 
+    target_queue: Optional["asyncio.Queue[SessionControl]"] = None
+    target_cancel: Optional[asyncio.Event] = None
+
+    if queues.allow_multi and control.file_id:
+        target_queue = queues.sub_control_queues.get(control.file_id)
+        target_cancel = queues.sub_cancel_events.get(control.file_id)
+        if target_queue is None:
+            raise HTTPException(status_code=404, detail="file session not found")
+
+    target_queue = target_queue or queues.control_queue
+    target_cancel = target_cancel or queues.cancel_event
+
     if control.action == "cancel":
-        queues.cancel_event.set()
-        await queues.control_queue.put(control)
+        target_cancel.set()
+        await target_queue.put(control)
     elif control.action == "resume":
-        await queues.control_queue.put(control)
+        await target_queue.put(control)
     else:
-        await queues.control_queue.put(control)
+        await target_queue.put(control)
 
     return {"status": "received", "action": control.action, "thread_id": control.thread_id}
 

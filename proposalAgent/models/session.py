@@ -39,5 +39,9 @@ class SessionControl(BaseModel):
     thread_id: str = Field(..., description="会话线程ID")
     action: str = Field(..., description="控制动作，支持 resume/cancel")
     feedback: Optional[str] = Field(None, description="当 action=resume 时的反馈内容")
+    file_id: Optional[str] = Field(
+        None,
+        description="可选：当存在多文件子会话时，用于指定目标文件ID",
+    )
 
 

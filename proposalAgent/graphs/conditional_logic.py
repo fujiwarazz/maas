@@ -121,13 +121,13 @@ class ConditionalLogic:
             # if state.get("feedback_pending") and state.get("feedback_target") == "academic_analysis_node":
             #     return "final_analyst_node"
             return "msg_clear_academic"
+       
+        if academic_analysis_count >= max_iter:
+            if self._has_tool_calls(last):
+                return "tool_limit_academic"
+            return "msg_clear_academic"
         if self._has_tool_calls(last):
             return "tools_academic"
-        if academic_analysis_count > max_iter:
-            # if state.get("feedback_pending") and state.get("feedback_target") == "academic_analysis_node":
-            #     return "final_analyst_node"
-            return "msg_clear_academic"
-        
         return "msg_clear_academic"
 
 
@@ -151,6 +151,8 @@ class ConditionalLogic:
         if self._has_tool_calls(last):
             return "tools_future_influence"
         if future_influence_count > max_iter:
+            if self._has_tool_calls(last):
+                return "tool_limit_future_influence"
             return "msg_clear_future_influence"
         
         # if self._is_finalize_signal(getattr(last, "content", "")):

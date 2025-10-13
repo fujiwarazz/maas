@@ -194,7 +194,6 @@ def create_generator_agent(llm: ChatOpenAI):
 
     return generator_node
 
-
 def _format_debate_results(debate_results) -> str:
     """
     格式化辩论结果，使其更易于阅读和分析
@@ -217,10 +216,10 @@ def _format_debate_results(debate_results) -> str:
                         formatted_results.append(
                             f"裁判总结：{result_text['judge_summary']}"
                         )
-                    if "full_history" in result_text:
-                        formatted_results.append(
-                            f"辩论历史：{result_text['full_history']}"
-                        )
+                    # if "full_history" in result_text:
+                    #     formatted_results.append(
+                    #         f"辩论历史：{result_text['full_history']}"
+                    #     )
                 else:
                     formatted_results.append(str(result_text))
         elif isinstance(debate_data, list):
@@ -233,10 +232,10 @@ def _format_debate_results(debate_results) -> str:
                             formatted_results.append(
                                 f"裁判总结：{result_data['judge_summary']}"
                             )
-                        if "full_history" in result_data:
-                            formatted_results.append(
-                                f"辩论历史：{result_data['full_history']}"
-                            )
+                        # if "full_history" in result_data:
+                        #     formatted_results.append(
+                        #         f"辩论历史：{result_data['full_history']}"
+                        #     )
                     else:
                         formatted_results.append(str(result_data))
         else:
@@ -264,3 +263,4 @@ def _format_completeness_result(completeness_result) -> str:
         return formatted
     except (KeyError, TypeError, ValueError) as e:
         return f"完备性检查结果格式异常: {e}"
+

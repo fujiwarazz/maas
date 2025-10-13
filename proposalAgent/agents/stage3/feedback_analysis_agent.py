@@ -140,7 +140,6 @@ def create_feedback_analysis_agent(llm: ChatOpenAI):
         return state
     
     return feedback_analysis_node
-
 def _format_debate_results(debate_results) -> str:
     """
     格式化辩论结果，使其更易于阅读和分析

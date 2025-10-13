@@ -8,11 +8,11 @@ TONGYI_CONFIG = {
     "llm_provider": "tongyi",
     # "api_key": os.getenv("DASHSCOPE_API_KEY"),
     "api_key": "sk-9ce983386aa74c8f8131eb8ecbf90f58",
-    "deep_think_llm": "qwen-max",
+    "deep_think_llm": "qwen-plus",
     "quick_think_llm": "qwen-plus",
     "backend_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     # Debate and discussion settings
-    "max_debate_rounds": 3,
+    "max_debate_rounds": 2,
     "max_risk_discuss_rounds": 3,
     "max_recur_limit": 3,
     # Tool settings

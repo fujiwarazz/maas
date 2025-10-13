@@ -44,7 +44,6 @@ def create_final_analyst_agent(llm: ChatOpenAI):
             """基于当前状态中的所有信息，请进行综合分析：
 
             研究主题：{research_topic}
-            研究结构：{research_structure}
             申请人信息：{research_person_info}
             基本信息：{research_basic_info}
             项目团队信息：{research_project_team_info}
@@ -53,10 +52,8 @@ def create_final_analyst_agent(llm: ChatOpenAI):
 
             分析报告：
             学术分析：{academic_analysis_report}
-            社会分析：{social_analysis_report}
             未来影响分析：{future_influence_report}
 
-            跨学科分析结果：{interdisciplinary_results}
 
             辩论结果：{debate_results}
             请提供全面的综合分析和完整的总结。"""
@@ -97,7 +94,6 @@ def create_final_analyst_agent(llm: ChatOpenAI):
         return state
     
     return final_analyst_node
-
 def _format_debate_results(debate_results) -> str:
     """
     格式化辩论结果，使其更易于阅读和分析
@@ -122,8 +118,8 @@ def _format_debate_results(debate_results) -> str:
                     # 如果结果是DebateState类型的字典
                     if "judge_summary" in result_text:
                         formatted_results.append(f"裁判总结：{result_text['judge_summary']}")
-                    if "full_history" in result_text:
-                        formatted_results.append(f"辩论历史：{result_text['full_history']}")
+                    # if "full_history" in result_text:
+                    #     formatted_results.append(f"辩论历史：{result_text['full_history']}")
                 else:
                     formatted_results.append(str(result_text))
         elif isinstance(debate_data, list):
@@ -135,11 +131,12 @@ def _format_debate_results(debate_results) -> str:
                     if isinstance(result_data, dict):
                         if "judge_summary" in result_data:
                             formatted_results.append(f"裁判总结：{result_data['judge_summary']}")
-                        if "full_history" in result_data:
-                            formatted_results.append(f"辩论历史：{result_data['full_history']}")
+                        # if "full_history" in result_data:
+                        #     formatted_results.append(f"辩论历史：{result_data['full_history']}")
                     else:
                         formatted_results.append(str(result_data))
         else:
             formatted_results.append(str(debate_data))
     
     return "\n".join(formatted_results) if formatted_results else "辩论结果格式异常"
+

@@ -2,7 +2,7 @@ import asyncio
 import copy
 from typing import Dict, Any, Optional
 from logging import getLogger
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, AIMessage, ToolMessage
 from langgraph.graph import END, StateGraph, START
 from langgraph.prebuilt import ToolNode
 from langgraph.types import interrupt
@@ -90,6 +90,32 @@ class GraphSetup:
         self.innovation_bad_memory=innovation_bad_memory
         self.innovation_manager_memory=innovation_manager_memory
 
+    def _create_tool_limit_node(self, name: str, notice: str):
+        """创建工具调用次数限制节点，为每个 tool_call 返回 ToolMessage"""
+        def tool_limit_node(state: AgentState) -> AgentState:
+            new_state = copy.deepcopy(state)
+            messages = list(new_state.get("messages", []))
+            
+            # 获取最后一条消息（应该是带 tool_calls 的 AIMessage）
+            if messages:
+                last_message = messages[-1]
+                tool_calls = getattr(last_message, "tool_calls", None)
+                
+                if tool_calls:
+                    # 为每个 tool_call 生成对应的 ToolMessage
+                    for tool_call in tool_calls:
+                        tool_message = ToolMessage(
+                            content=notice,
+                            tool_call_id=tool_call["id"],
+                            name=tool_call.get("name", name),
+                        )
+                        messages.append(tool_message)
+            
+            new_state["messages"] = messages
+            return new_state
+
+        return tool_limit_node
+
     def setup_graph(self):
         """
         构建并返回工作流图。
@@ -108,6 +134,15 @@ class GraphSetup:
         )
         academic_tool_exc_node = self.tool_nodes["academic"]
         academic_msg_clear_node = create_msg_delete()
+        academic_tool_limit_node = self._create_tool_limit_node(
+            "academic_analysis_tool_limit",
+            "学术分析工具调用次数已达上限，本轮不再执行工具，请整理已有信息后继续。",
+        )
+        # 工具触发但达到上限时，将提示信息加入消息队列后再进入 msg_clear
+        future_influence_tool_limit_node = self._create_tool_limit_node(
+            "future_influence_tool_limit",
+            "未来影响分析工具调用次数已达上限，本轮不再执行工具，请基于已有资料整理结论。",
+        )
 
         future_influence_node = create_future_influence_agent(
             self.deep_think_llm, self.toolkit
@@ -155,6 +190,7 @@ class GraphSetup:
         academic_workflow.add_node("academic_analysis_node", academic_analysis_node)
         academic_workflow.add_node("academic_tool_exc_node", academic_tool_exc_node)
         academic_workflow.add_node("academic_msg_clear_node", academic_msg_clear_node)
+        academic_workflow.add_node("academic_tool_limit_node", academic_tool_limit_node)
         academic_workflow.add_edge(START, "academic_analysis_node")
         academic_workflow.add_conditional_edges(
             "academic_analysis_node",
@@ -162,8 +198,10 @@ class GraphSetup:
             {
                 "tools_academic": "academic_tool_exc_node",
                 "msg_clear_academic": "academic_msg_clear_node",
+                "tool_limit_academic": "academic_tool_limit_node",
             },
         )
+        academic_workflow.add_edge("academic_tool_limit_node", "academic_analysis_node")
         academic_workflow.add_edge("academic_tool_exc_node", "academic_analysis_node")
         academic_workflow.add_edge("academic_msg_clear_node", END)
         compiled_academic_graph = academic_workflow.compile()
@@ -177,6 +215,9 @@ class GraphSetup:
         future_influence_workflow.add_node(
             "future_influence_msg_clear_node", future_influence_msg_clear_node
         )
+        future_influence_workflow.add_node(
+            "future_influence_tool_limit_node", future_influence_tool_limit_node
+        )
         future_influence_workflow.add_edge(START, "future_influence_node")
         future_influence_workflow.add_conditional_edges(
             "future_influence_node",
@@ -184,7 +225,11 @@ class GraphSetup:
             {
                 "tools_future_influence": "future_influence_tool_exc_node",
                 "msg_clear_future_influence": "future_influence_msg_clear_node",
+                "tool_limit_future_influence": "future_influence_tool_limit_node",
             },
+        )
+        future_influence_workflow.add_edge(
+            "future_influence_tool_limit_node", "future_influence_node"
         )
         future_influence_workflow.add_edge(
             "future_influence_tool_exc_node", "future_influence_node"
@@ -353,12 +398,16 @@ class GraphSetup:
         workflow.add_node("academic_analysis_node", academic_analysis_node)
         workflow.add_node("academic_tool_exc_node", academic_tool_exc_node)
         workflow.add_node("academic_msg_clear_node", academic_msg_clear_node)
+        workflow.add_node("academic_tool_limit_node", academic_tool_limit_node)
         workflow.add_node("future_influence_node", future_influence_node)
         workflow.add_node(
             "future_influence_tool_exc_node", future_influence_tool_exc_node
         )
         workflow.add_node(
             "future_influence_msg_clear_node", future_influence_msg_clear_node
+        )
+        workflow.add_node(
+            "future_influence_tool_limit_node", future_influence_tool_limit_node
         )
         workflow.add_node("interdisciplinary_node", interdisciplinary_node)
         workflow.add_node(

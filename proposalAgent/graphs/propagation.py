@@ -11,42 +11,17 @@ from proposalAgent.agents.utils.agent_states import (
 from typing import List
 
 class Propagator:
-    """
-    处理状态的初始化以及在图（Graph）中的传播。
-    这个类是一个辅助工具，主要负责准备图运行所需的初始数据结构和配置参数。
-    它将图的“启动”逻辑与图本身的结构定义分离开来，使代码更清晰、更易于管理。
-    """
-
+   
     def __init__(self, max_recur_limit=100):
-        """
-        使用配置参数初始化传播器。
-        
-        Args:
-            max_recur_limit (int, optional): 设置图的最大递归深度限制。
-                                             这是一个安全机制，用于防止图中出现无限循环，
-                                             导致程序崩溃或资源耗尽。默认为 100 次。
-        """
+       
         self.max_recur_limit = max_recur_limit
 
     def create_initial_state(
         self, user_prompt: str, user_interest: List[str], filepath: str = ""
     ) -> Dict[str, Any]:
-        """
-        为项目评估代理图（Agent Graph）创建一个初始状态字典。
-        这个函数就像一个"重置按钮"，确保每次启动一个新的项目评估流程时，
-        所有的状态变量都被设置到一个干净、预定义的初始值。
-
-        Args:
-            user_prompt (str): 用户输入的项目评估请求或指令。
-            user_interest (List[str]): 用户关注的评估重点列表。
-            filepath (str, optional): 项目文档的文件路径。
-
-        Returns:
-            Dict[str, Any]: 一个符合 `AgentState` 结构的字典，作为图的起始输入。
-        """
+        
         from langchain_core.messages import HumanMessage
         
-        # 构建初始消息
         prompt_content = f"""项目评估请求：{user_prompt}
 
                 用户关注的评估重点：{', '.join(user_interest) if user_interest else '全面评估'}
@@ -56,7 +31,6 @@ class Propagator:
                 请对此项目进行全面的多维度评估分析。"""
         
         return {
-            # 消息历史 - 使用正确的消息格式
             "messages": [HumanMessage(content=prompt_content)],
 
             # 基本信息字段
@@ -157,15 +131,7 @@ class Propagator:
         }
 
     def validate_state_completeness(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        验证状态的完整性，返回缺失字段的报告。
-        
-        Args:
-            state (Dict[str, Any]): 当前状态字典
-            
-        Returns:
-            Dict[str, Any]: 包含验证结果的字典
-        """
+       
         required_fields = [
             "research_topic",
             "academic_analysis_report", 
@@ -193,15 +159,7 @@ class Propagator:
         }
 
     def extract_evaluation_summary(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        从状态中提取评估摘要信息。
-        
-        Args:
-            state (Dict[str, Any]): 完整的状态字典
-            
-        Returns:
-            Dict[str, Any]: 评估摘要字典
-        """
+       
         return {
             "project_title": state.get("research_topic", ["未知项目"])[0] if isinstance(state.get("research_topic"), list) else state.get("research_topic", "未知项目"),
             "evaluation_status": "已完成" if state.get("final_report") else "进行中",

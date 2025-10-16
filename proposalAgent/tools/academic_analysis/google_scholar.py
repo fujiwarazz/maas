@@ -8,7 +8,7 @@ from typing import Annotated
 
 class SerpAPIScholar:
     def __init__(self, api_key: Optional[str] = None, hl: str = "en"):
-        self.api_key = api_key or os.getenv("SERPAPI_API_KEY")
+        self.api_key = api_key or os.getenv("SERP_API_KEY")
         self.hl = hl
         if not self.api_key:
             raise ValueError("SERPAPI_API_KEY 未设置。请在环境变量中配置 SerpApi 的 API Key。")

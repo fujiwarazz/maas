@@ -85,7 +85,6 @@ OSS_BUCKET = os.getenv("OSS_BUCKET", "evaluatoin-pdfs")
 class OssNotConfigured(RuntimeError):
     """Raised when OSS dependencies or credentials are missing."""
 
-
 def _ensure_oss_available() -> None:
     if not all([oss2, EnvironmentVariableCredentialsProvider, oss, V2EnvProvider]):
         raise OssNotConfigured("OSS SDK 未安装，请安装 oss2 和 alibabacloud_oss_v2 后重试")
@@ -266,10 +265,6 @@ class SessionQueues:
         self.sub_cancel_events: Dict[str, asyncio.Event] = {}
         self.sub_session_ids: Dict[str, str] = {}
 
-
-
-
-
 async def get_graph() -> ProposalAgentGraph:
     return ProposalAgentGraph(config=TONGYI_CONFIG)
 
@@ -362,11 +357,6 @@ def flatten_state(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return flat
 
-
-
-
-
-
 @app.post("/upload")
 async def upload_file(
     files: List[UploadFile] = File(...),
@@ -430,7 +420,6 @@ async def run_evaluation(
     async def feedback_handler(interrupt_payload: Any) -> Optional[str]:
         payload_value = getattr(interrupt_payload, "value", interrupt_payload)
         prompt = build_interrupt_prompt(final_state, payload_value)
-
         interrupt_event: Dict[str, Any] = {
             "thread_id": session_thread_id,
             "prompt": prompt,
@@ -469,8 +458,6 @@ async def run_evaluation(
                 else:
                     queues.cancel_event.clear()
                 return control.feedback or ""
-
-
     file_id_to_use = file_id or (request.file_ids[0] if request.file_ids else "")
 
     initial_state = graph.propagator.create_initial_state(
@@ -741,23 +728,91 @@ async def proposal_evaluation(
                             raw_states[fid] = per_state
                             flattened_states[fid] = flatten_state(per_state)
 
+                        # todo 可以引入外部记忆
                         prompt = ChatPromptTemplate.from_messages(
                             [
                                 (
                                     "system",
-                                    """你是一个资深的科研评审专家，需要对多个申报材料进行横向对比，给出全面、专业的综合评估报告。""",
+                                    """你是国家自然科学基金委（NSFC）的通信评审专家。请以严肃、克制、可审计的专业语气进行横向对比评审。你的责任是从同一批次申请中择优，而非普遍称赞。
+                                        必须遵循以下评审准则：
+                                        1) 评价基于已给出的分析摘要与信息，不得臆测或补充未提供的事实；确有缺失时请明确标注“缺失”。
+                                        2) 明确打分与排名：采用标准化评分框架，总分100分，同时不能给分数不能普遍给得太高了。权重为：
+                                        - 学术价值/科学问题重要性：30
+                                        - 创新性/原创性：25
+                                        - 可行性（技术路线、里程碑、资源匹配）：20
+                                        - 申请人及团队与条件保障：15
+                                        - 预期影响与应用（学术/社会/产业）：10
+                                        3) 对每个申请给出证据链式评述（指出支撑其分数的具体证据或“缺失”项），避免空泛形容词。
+                                        4) 横向对比要抓差异与短板，必要时做“取舍性判断”（例如同等创新性下优先可行性更强者）。
+                                        5) 输出中必须包含：结论性排序与资助建议（如“推荐资助/有条件资助/不推荐”）和关键风险清单。
+                                        6) 可复核性：将评分汇总到表格与可视化（JSON数据，mermaid），便于后续生成图表。
+                                        - 如果是JSON，那么就用```json chart```来包住
+                                        - 如果是mermaid，那么就用```mermaid ```来包住
+                                        """,
                                 ),
                                 (
                                     "human",
-                                    """请基于以下多个文件的分析结果，完成一个综合对比评估：
-                                        文件总数：{file_count}。
-                                        请先概述整体差异与共性，再逐一比较各文件在关键维度（学术分析、社会/未来影响、跨学科表现、辩论裁判结论等）的主要发现和不足，并给出推荐排序或选择建议
-                                        报告内容要尽可能多、全面
-                                        注意，你是一个审核员，只能在统一批申请书内选择出最优的，不能都觉得很好，一定要做好权衡！
-                                        注意，内容一定要翔实、充分、具体，不能有任何遗漏！
+                                    """请基于以下多份材料的分析结果，完成一份“横向对比综合评审报告”。
+                                        文件总数：{file_count}
                                         各文件的分析摘要如下：
                                         {formatted_states}
-                                        """,
+                                        ### 输出内容
+                                        一、总体概览
+                                        - 概述本批次申请的共性、主要分歧点和总体质量水位。
+
+                                        二、逐项评审（按申请项目+申请人逐一给出）
+                                        - 核心科学问题与学术价值（证据点）
+                                        - 主要创新点与与现有工作的差异（证据点）
+                                        - 技术路线与可行性（风险与依赖）
+                                        - 申请人及团队条件（成果记录/平台支撑/合作情况）
+                                        - 预期影响与应用前景
+                                        - 主要缺陷与不确定性（明确指出“缺失”处）
+                                        - 小结分项分（五维权重得分）与总分（0–100）
+
+                                        三、横向对比与取舍
+                                        - 关键差异矩阵（至少3个维度的正反对照）
+                                        - 取舍性判断（给出清晰理由）
+
+                                       
+                                        四、可视化输出（可有可无）
+                                        1) Markdown评分表（列：申请人、申请项目、学术价值(30)、创新性(25)、可行性(20)、团队与条件(15)、影响(10)、总分(100)）
+                    
+                                        2) JSON数据
+                                        ```json chart
+                                        {{
+                                            "version": "v1",
+                                            "columns": [
+                                                {{
+                                                "id": "文献1ID",
+                                                "title": "文献1名称",
+                                                "summary": "一句话/几句话摘要，≤120字",
+                                                "metrics": {{
+                                                    "spark": [12, 18, 15, 20, 19],      // 折线（基础计量）序列
+                                                    "bars":  [7,  11,  6,  9,  13]       // 柱状（基础计量）序列
+                                                }},
+                                                "radar": {{
+                                                    "影响力": 0.62,
+                                                    "学术性": 0.70,
+                                                    "产业化": 0.40,
+                                                    "新颖性": 0.55,
+                                                    "可行性": 0.68
+                                                }},
+                                                "tags": ["专利", "奖项", "商业产品"]     // 应用转化标签，可为空数组
+                                                }}
+                                            ],
+                                            "ui_hints": {{
+                                                "spark_max": 100,   // 折线/柱状的参考上限，便于统一 y 轴
+                                                "bars_max":  100
+                                            }}
+                                            }}
+                                        }}
+                                        五、结论与资助建议
+                                        - 排名列表（从高到低，给出总分）
+                                        - 资助建议（“推荐资助/有条件资助/不推荐”，如为“有条件”，写明条件）
+                                        ```
+                                        """
+                                        
+                                        ,
                                 ),
                             ]
                         )
@@ -767,22 +822,17 @@ async def proposal_evaluation(
                             formatted_lines.append(f"文件ID: {fid}")
                             formatted_lines.append(f"内容摘要{state_flat.get('research_report_body_summary', '未生成')}")
                             formatted_lines.append(
-                                f"  学术分析：{state_flat.get('academic_analysis_report', '未生成') }"
+                                f"  ### 学术分析：{state_flat.get('academic_analysis_report', '未生成') }"
                             )
                             formatted_lines.append(
-                                f"  未来影响分析：{state_flat.get('future_influence_report', '未生成')}"
+                                f"  ### 未来影响分析：{state_flat.get('future_influence_report', '未生成')}"
+                            )
+                          
+                            formatted_lines.append(
+                                f"  ### 辩论结果：{_format_debate_results(state_flat.get('debate_results', {}))}"
                             )
                             formatted_lines.append(
-                                f"  跨学科结果：{state_flat.get('interdisciplinary_results', [])}"
-                            )
-                            formatted_lines.append(
-                                f"  辩论结果：{_format_debate_results(state_flat.get('debate_results', {}))}"
-                            )
-                            formatted_lines.append(
-                                f"  完备性检查：{_format_completeness_result(state_flat.get('completeness_check_result', {}))}"
-                            )
-                            formatted_lines.append(
-                                f"  最终分析摘要：{state_flat.get('final_analysis_summary', '无')}"
+                                f"  ### 最终分析摘要：{state_flat.get('final_analysis_summary', '无')}"
                             )
                             
                             formatted_lines.append("")
@@ -836,11 +886,11 @@ async def proposal_evaluation(
                         [
                             (
                                 "system",
-                                """你是一个专业的项目评估报告生成智能体。你的任务是基于所有收集到的分析信息，生成一份尽可能全面、专业、结构化的项目/申请/论文的评估报告。""",
+                                """你是一个资深的、严格的国家自然基金委项目申请评审专家。你的任务是基于所有收集到的分析信息，生成一份尽可能全面、专业、结构化的项目/申请/论文的评估结果，语气要严肃""",
                             ),
                             (
                                 "human",
-                                """请基于以下全部分析信息，生成最终尽可能详尽的项目评估报告，内容要翔实充分具体！：\n学术分析：{academic_analysis_report}\n社会分析：{social_analysis_report}\n未来影响分析：{future_influence_report}\n跨学科分析结果：{interdisciplinary_results}\n辩论结果：{debate_results}\n最终分析摘要：{final_analysis_summary}\n完备性检查结果：{completeness_check_result}\n人类反馈：{human_feedback}""",
+                                """请基于以下全部分析信息，生成最终尽可能详尽的项目评估报告，内容要翔实充分具体！：\n学术分析：{academic_analysis_report}\n社会分析：{social_analysis_report}\n未来影响分析：{future_influence_report}\n辩论结果：{debate_results}\n最终分析摘要：{final_analysis_summary}\n完备性检查结果：{completeness_check_result}\n人类反馈：{human_feedback}""",
                             ),
                         ]
                     )
@@ -849,7 +899,7 @@ async def proposal_evaluation(
                         "academic_analysis_report": raw_state.get("academic_analysis_report", "未进行学术分析"),
                         "social_analysis_report": raw_state.get("social_analysis_report", "未进行社会分析"),
                         "future_influence_report": raw_state.get("future_influence_report", "未进行未来影响分析"),
-                        "interdisciplinary_results": raw_state.get("interdisciplinary_results", []),
+                     #   "interdisciplinary_results": raw_state.get("interdisciplinary_results", []),
                         "debate_results": _format_debate_results(raw_state.get("debate_results", {})),
                         "final_analysis_summary": raw_state.get("final_analysis_summary", "未完成最终分析"),
                         "completeness_check_result": _format_completeness_result(

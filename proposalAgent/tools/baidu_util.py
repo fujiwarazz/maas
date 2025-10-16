@@ -24,6 +24,26 @@ class BaiduSearchUtil:
     def _extract_content_from_url(self, url: str) -> Dict[str, Any]:
         """从URL提取内容"""
         try:
+            # 验证URL是否有效
+            if not url or not url.strip():
+                logger.warning("URL为空，跳过解析")
+                return {
+                    'title': '',
+                    'content': 'URL为空',
+                    'links': [],
+                    'status': 'error'
+                }
+            
+            # 检查URL格式
+            if not self._is_valid_url(url):
+                logger.warning("URL格式无效: %s", url)
+                return {
+                    'title': '',
+                    'content': f'URL格式无效: {url}',
+                    'links': [],
+                    'status': 'error'
+                }
+            
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
             
@@ -119,13 +139,18 @@ class BaiduSearchUtil:
                     processed_result['deeper_links'] = []
                     
                     for link in url_content['links'][:3]:
-                        logger.info("正在解析深层链接 (深度 %d): %s", depth-1, link['url'])
-                        deeper_content = self._extract_content_from_url(link['url'])
+                        link_url = link.get('url', '')
+                        if not link_url or not link_url.strip():
+                            logger.warning("深层链接URL为空，跳过: %s", link)
+                            continue
+                            
+                        logger.info("正在解析深层链接 (深度 %d): %s", depth-1, link_url)
+                        deeper_content = self._extract_content_from_url(link_url)
                         processed_result['deeper_links'].append({
                             'link_info': link,
                             'content': deeper_content
                         })
-                        time.sleep(1)  #
+                        time.sleep(1)  # 避免请求过快
                 
                 time.sleep(1)  # 避免请求过快
             

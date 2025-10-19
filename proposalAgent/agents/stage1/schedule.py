@@ -49,7 +49,7 @@ def create_schedule_agent(llm):
         weight_distribution = json.loads(result.content)
         for k,v in weight_distribution.items():
             if k in weight.keys():
-                if k == "academic_agent":
+                if k == "academic_agent" or k == "future_influence_agent":
                     weight[k] = 0.5
                 else: 
                     weight[k] = v

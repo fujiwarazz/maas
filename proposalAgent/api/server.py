@@ -167,20 +167,92 @@ def create_and_upload_reports(final_state: Optional[Dict[str, Any]], thread_id: 
         logger.warning("reportlab 未安装，无法生成 PDF，跳过文件上传")
         return None
 
-    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    if REPORTLAB_AVAILABLE:
+        try:
+            pdfmetrics.getFont("STSong-Light")
+        except KeyError:
+            pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
     flat_state: Dict[str, Any] = (
         flatten_state(final_state) if isinstance(final_state, dict) else {}
     )
 
-    academic_report = (
+    def _normalize(value: Any) -> str:
+        if value is None:
+            return "无"
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False, indent=2)
+            except Exception:  # noqa: BLE001
+                return str(value)
+        text = str(value).strip()
+        return text or "无"
+
+    academic_report = _normalize(
         flat_state.get("academic_analysis_report")
-        or "尚未生成学术分析报告"
+        or final_state.get("academic_analysis_report")
+        or "未提供学术分析报告"
     )
-    future_report = (
+    future_report = _normalize(
         flat_state.get("future_influence_report")
-        or "尚未生成未来影响力分析报告"
+        or final_state.get("future_influence_report")
+        or "未提供未来影响力分析"
     )
+    social_report = _normalize(
+        flat_state.get("social_analysis_report")
+        or final_state.get("social_analysis_report")
+        or "未提供社会影响分析"
+    )
+    final_analysis_summary = _normalize(
+        flat_state.get("final_analysis_summary")
+        or final_state.get("final_analysis_summary")
+        or "未提供最终分析摘要"
+    )
+    final_report_text = _normalize(
+        flat_state.get("final_report")
+        or final_state.get("final_report")
+        or "未提供综合评审报告"
+    )
+    completeness_info = _normalize(
+        flat_state.get("completeness_check_result")
+        or final_state.get("completeness_check_result")
+        or "未提供完备性检查结果"
+    )
+    human_feedback = _normalize(
+        flat_state.get("human_feedback")
+        or final_state.get("human_feedback")
+        or "无"
+    )
+
+    missing_markers = {
+        "未提供学术分析报告",
+        "未提供未来影响力分析",
+        "未提供社会影响分析",
+        "未提供最终分析摘要",
+        "未提供综合评审报告",
+        "未提供完备性检查结果",
+        "未提供辩论裁判总结",
+        "无",
+        "{}",
+    }
+
+    handled_report_keys = {
+        "academic_analysis_report",
+        "future_influence_report",
+        "social_analysis_report",
+        "final_analysis_summary",
+        "final_report",
+    }
+
+    extra_reports: List[Tuple[str, str]] = []
+    for key, value in flat_state.items():
+        if not value:
+            continue
+        if key in handled_report_keys:
+            continue
+        if key.endswith("_report"):
+            extra_reports.append((key, _normalize(value)))
+
     debate_results = flat_state.get("debate_results", {}) or final_state.get("debate_results", {})
     judge_summaries = extract_judge_summaries(debate_results)
 
@@ -188,38 +260,113 @@ def create_and_upload_reports(final_state: Optional[Dict[str, Any]], thread_id: 
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
-    def draw_text_block(title: str, content: str, start_y: float) -> float:
-        pdf.setFont("STSong-Light", 14)
-        pdf.drawString(40, start_y, title)
-        pdf.setFont("STSong-Light", 11)
-
-        text_obj = pdf.beginText(40, start_y - 24)
-        text_obj.setFont("STSong-Light", 11)
-        wrapped_lines: List[str] = []
-        for line in content.splitlines() or [""]:
-            if not line:
-                wrapped_lines.append("")
-                continue
-            wrapped_lines.extend(textwrap.wrap(line, width=60))
-
-        for line in wrapped_lines:
-            if not line:
-                text_obj.textLine(" ")
-            else:
-                text_obj.textLine(line)
-        pdf.drawText(text_obj)
-        return text_obj.getY() - 16
+    PAGE_MARGIN = 40
+    LINE_HEIGHT = 20
+    TITLE_FONT = "STSong-Light"
+    BODY_FONT = "STSong-Light"
+    FONT_SIZE = 16
+    usable_width = width - PAGE_MARGIN * 2
 
     pdf.setTitle("ProposalAgent Analysis Report")
 
-    y_position = height - 60
-    pdf.setFont("STSong-Light", 16)
-    pdf.drawString(40, y_position, "ProposalAgent 评估输出摘要")
-    y_position -= 40
+    y_position = height - PAGE_MARGIN
+    page_number = 1
 
-    y_position = draw_text_block("线程 ID", str(thread_id), y_position)
-    y_position = draw_text_block("学术分析报告", academic_report, y_position - 16)
-    y_position = draw_text_block("未来影响力分析", future_report, y_position - 16)
+    def start_new_page() -> None:
+        nonlocal y_position, page_number
+        pdf.showPage()
+        page_number += 1
+        pdf.setFont(TITLE_FONT, FONT_SIZE)
+        pdf.drawString(PAGE_MARGIN, height - PAGE_MARGIN, "ProposalAgent 评估输出摘要（续）")
+        y_position = height - PAGE_MARGIN - LINE_HEIGHT * 2
+
+    def ensure_space(line_count: int = 1) -> None:
+        nonlocal y_position
+        if y_position - line_count * LINE_HEIGHT < PAGE_MARGIN:
+            start_new_page()
+
+    def render_lines(text: str) -> List[str]:
+        raw_lines = text.splitlines() if text else [""]
+        wrapped: List[str] = []
+
+        for raw_line in raw_lines:
+            stripped = raw_line.rstrip()
+            if stripped == "":
+                wrapped.append("")
+                continue
+
+            current = ""
+            for char in stripped:
+                candidate = current + char
+                if pdf.stringWidth(candidate, BODY_FONT, FONT_SIZE) <= usable_width:
+                    current = candidate
+                else:
+                    if current:
+                        wrapped.append(current)
+                    # 如果单字符超过宽度，直接单独成行
+                    if pdf.stringWidth(char, BODY_FONT, FONT_SIZE) > usable_width:
+                        wrapped.append(char)
+                        current = ""
+                    else:
+                        current = char
+
+            if current:
+                wrapped.append(current)
+
+        return wrapped or [""]
+
+    def write_paragraph(title: str, content: str) -> None:
+        nonlocal y_position
+        if not content:
+            return
+        normalized = content.strip()
+        if not normalized:
+            return
+        if normalized in missing_markers:
+            return
+        wrapped_lines = render_lines(normalized)
+        ensure_space(len(wrapped_lines) + 2)
+
+        pdf.setFont(TITLE_FONT, FONT_SIZE)
+        pdf.drawString(PAGE_MARGIN, y_position, title)
+        y_position -= LINE_HEIGHT
+
+        pdf.setFont(BODY_FONT, FONT_SIZE)
+        for line in wrapped_lines:
+            if y_position - LINE_HEIGHT < PAGE_MARGIN:
+                start_new_page()
+                pdf.setFont(BODY_FONT, FONT_SIZE)
+            if line:
+                pdf.drawString(PAGE_MARGIN, y_position, line)
+            y_position -= LINE_HEIGHT
+
+        y_position -= LINE_HEIGHT // 2
+
+    pdf.setFont(TITLE_FONT, FONT_SIZE)
+    pdf.drawString(PAGE_MARGIN, y_position, "ProposalAgent 评估输出摘要")
+    y_position -= LINE_HEIGHT * 2
+
+    write_paragraph("线程 ID", str(thread_id))
+    write_paragraph("最终分析摘要", final_analysis_summary)
+    write_paragraph("学术分析报告", academic_report)
+    write_paragraph("社会影响分析报告", social_report)
+    write_paragraph("未来影响力分析报告", future_report)
+    write_paragraph("综合评审报告", final_report_text)
+
+    report_title_map = {
+        "social_analysis_report": "社会影响分析报告",
+        "future_influence_report": "未来影响力分析报告",
+        "academic_analysis_report": "学术分析报告",
+        "final_report": "综合评审报告",
+    }
+
+    for key, value in extra_reports:
+        title = report_title_map.get(key, key)
+        write_paragraph(title, value)
+
+    write_paragraph("完备性检查结果", completeness_info)
+    if human_feedback not in missing_markers:
+        write_paragraph("人类反馈", human_feedback)
 
     judge_lines: List[str] = []
     if judge_summaries:
@@ -231,14 +378,16 @@ def create_and_upload_reports(final_state: Optional[Dict[str, Any]], thread_id: 
             judge_lines.append(f"  创新性裁判结论：{innovation}")
             judge_lines.append("")
     else:
-        judge_lines.append("尚未生成辩论裁判总结")
+        judge_lines.append("未提供辩论裁判总结")
 
-    y_position = draw_text_block("辩论裁判最终结论", "\n".join(judge_lines), y_position - 16)
+    write_paragraph("辩论裁判最终结论", "\n".join(judge_lines))
 
-    pdf.setFont("STSong-Light", 10)
-    pdf.drawRightString(width - 40, 30, "Powered by ProposalAgent")
+    debate_details = _normalize(debate_results)
+    write_paragraph("辩论详情", debate_details)
 
-    pdf.showPage()
+    pdf.setFont(BODY_FONT, FONT_SIZE)
+    pdf.drawRightString(width - PAGE_MARGIN, PAGE_MARGIN / 2, "Powered by ProposalAgent")
+
     pdf.save()
 
     buffer.seek(0)
@@ -365,7 +514,6 @@ async def upload_file(
     for file in files:
         suffix = Path(file.filename or "uploaded").suffix
         dest_path = UPLOAD_ROOT / f"{uuid.uuid4().hex}{suffix}"
-        # 重新定位到流起始位置，分块读取并写入，避免一次性读取为空或耗尽内存
         await file.seek(0)
         total_written = 0
         with dest_path.open("wb") as tmp:
@@ -729,115 +877,127 @@ async def proposal_evaluation(
                             flattened_states[fid] = flatten_state(per_state)
 
                         # todo 可以引入外部记忆
-                        prompt = ChatPromptTemplate.from_messages(
-                            [
-                                (
-                                    "system",
-                                    """你是国家自然科学基金委（NSFC）的通信评审专家。请以严肃、克制、可审计的专业语气进行横向对比评审。你的责任是从同一批次申请中择优，而非普遍称赞。
-                                        必须遵循以下评审准则：
-                                        1) 评价基于已给出的分析摘要与信息，不得臆测或补充未提供的事实；确有缺失时请明确标注“缺失”。
-                                        2) 明确打分与排名：采用标准化评分框架，总分100分，同时不能给分数不能普遍给得太高了。权重为：
-                                        - 学术价值/科学问题重要性：30
-                                        - 创新性/原创性：25
-                                        - 可行性（技术路线、里程碑、资源匹配）：20
-                                        - 申请人及团队与条件保障：15
-                                        - 预期影响与应用（学术/社会/产业）：10
-                                        3) 对每个申请给出证据链式评述（指出支撑其分数的具体证据或“缺失”项），避免空泛形容词。
-                                        4) 横向对比要抓差异与短板，必要时做“取舍性判断”（例如同等创新性下优先可行性更强者）。
-                                        5) 输出中必须包含：结论性排序与资助建议（如“推荐资助/有条件资助/不推荐”）和关键风险清单。
-                                        6) 可复核性：将评分汇总到表格与可视化（JSON数据，mermaid），便于后续生成图表。
-                                        - 如果是JSON，那么就用```json chart```来包住
-                                        - 如果是mermaid，那么就用```mermaid ```来包住
-                                        """,
-                                ),
-                                (
-                                    "human",
-                                    """请基于以下多份材料的分析结果，完成一份“横向对比综合评审报告”。
-                                        文件总数：{file_count}
-                                        各文件的分析摘要如下：
-                                        {formatted_states}
-                                        ### 输出内容
-                                        一、总体概览
-                                        - 概述本批次申请的共性、主要分歧点和总体质量水位。
-
-                                        二、逐项评审（按申请项目+申请人逐一给出）
-                                        - 核心科学问题与学术价值（证据点）
-                                        - 主要创新点与与现有工作的差异（证据点）
-                                        - 技术路线与可行性（风险与依赖）
-                                        - 申请人及团队条件（成果记录/平台支撑/合作情况）
-                                        - 预期影响与应用前景
-                                        - 主要缺陷与不确定性（明确指出“缺失”处）
-                                        - 小结分项分（五维权重得分）与总分（0–100）
-
-                                        三、横向对比与取舍
-                                        - 关键差异矩阵（至少3个维度的正反对照）
-                                        - 取舍性判断（给出清晰理由）
-
-                                       
-                                        四、可视化输出（可有可无）
-                                        1) Markdown评分表（列：申请人、申请项目、学术价值(30)、创新性(25)、可行性(20)、团队与条件(15)、影响(10)、总分(100)）
-                    
-                                        2) JSON数据
-                                        ```json chart
-                                        {{
-                                            "version": "v1",
-                                            "columns": [
-                                                {{
-                                                "id": "文献1ID",
-                                                "title": "文献1名称",
-                                                "summary": "一句话/几句话摘要，≤120字",
-                                                "metrics": {{
-                                                    "spark": [12, 18, 15, 20, 19],      // 折线（基础计量）序列
-                                                    "bars":  [7,  11,  6,  9,  13]       // 柱状（基础计量）序列
-                                                }},
-                                                "radar": {{
-                                                    "影响力": 0.62,
-                                                    "学术性": 0.70,
-                                                    "产业化": 0.40,
-                                                    "新颖性": 0.55,
-                                                    "可行性": 0.68
-                                                }},
-                                                "tags": ["专利", "奖项", "商业产品"]     // 应用转化标签，可为空数组
-                                                }}
-                                            ],
-                                            "ui_hints": {{
-                                                "spark_max": 100,   // 折线/柱状的参考上限，便于统一 y 轴
-                                                "bars_max":  100
-                                            }}
-                                            }}
-                                        }}
-                                        五、结论与资助建议
-                                        - 排名列表（从高到低，给出总分）
-                                        - 资助建议（“推荐资助/有条件资助/不推荐”，如为“有条件”，写明条件）
-                                        ```
-                                        """
-                                        
-                                        ,
-                                ),
-                            ]
-                        )
-
+                        # todo 权重引入配置化
+                        # 添加额外的控制模版
+                        # 来源锚点 vs 原文锚点
+                        # 添加记忆模块，来优化各个agent的回复行为，根据最后生成报告的内容来惩罚对各个agent的输出 **** 重要
                         formatted_lines: List[str] = []
                         for fid, state_flat in flattened_states.items():
                             formatted_lines.append(f"文件ID: {fid}")
-                            formatted_lines.append(f"内容摘要{state_flat.get('research_report_body_summary', '未生成')}")
                             formatted_lines.append(
                                 f"  ### 学术分析：{state_flat.get('academic_analysis_report', '未生成') }"
                             )
                             formatted_lines.append(
                                 f"  ### 未来影响分析：{state_flat.get('future_influence_report', '未生成')}"
                             )
-                          
                             formatted_lines.append(
                                 f"  ### 辩论结果：{_format_debate_results(state_flat.get('debate_results', {}))}"
                             )
                             formatted_lines.append(
-                                f"  ### 最终分析摘要：{state_flat.get('final_analysis_summary', '无')}"
+                                f"  ### 原始文章结构化信息(原始文本+正文摘要信息): {str(state_flat.get('research_structure', '无'))}"
                             )
                             
                             formatted_lines.append("")
 
                         formatted_states = "\n".join(formatted_lines)
+
+                        prompt = ChatPromptTemplate.from_messages(
+                            [
+                                (
+                                    "system",
+                                    """
+                                        你是国家自然科学基金委员会项目评审专家。请仅依据【本轮提供的材料】进行横向对比评审并形成最终意见。
+
+                                        【硬性规则——务必全部满足】
+                                        1) 来源锚定：每一条关键判断与结论，句末必须标注来源，格式统一为：〔来源：文件id：第X页/图Y/表Z/式(K)/URL/DOI〕；"。
+                                        2) 信息边界：禁止使用、臆测或补充任何外部信息（含常识、既往经验、网络资料）。若输入材料本身包含外部资料，请以"〔外部资料：……，不计入评分依据〕"单独标注，并与正式结论分段隔离。
+                                        3) 可执行性：每条"问题/建议"均需落地为可执行条目（含：目标/动作/指标/验收/负责人或资源来源/时间）。
+                                        4) 科学性：必须给出对照实验设计与验证闭环（含：基线、数据切分、统计检验、外部验证与复现要素）。缺项时明确写明并给出"最低可行补充清单（MVP）"。
+                                        5) 风险透明：对关键结论标注"来源强度(高/中/低)"与"风险等级(高/中/低)"，二者分别独立判断。
+                                        6) NSFC口径：语气客观克制、就事论事；不使用宣传化、市场化措辞；篇章结构符合NSFC常见评审格式。
+
+                                        【写作与版式要求】
+                                        - 全文中文；结构化小标题；重要信息用 Markdown 表格呈现。
+                                        - 所有页码/图表编号必须出自本申请材料；不得输出网址或外部参考链接。
+                                        - 若材料存在缺项，请明确指出并给出MVP补充清单，但不得捏造信息。
+                                        """,
+                                ),
+                                (
+                                    "human",
+                                    """
+                                        请基于以下多份申请材料的分析结果，生成"国家自然科学基金项目横向对比评审意见"。内容要求翔实、可追溯、可执行，并严格遵守 system 中的硬性规则。
+                                        文件数目：{file_count}
+                                        【可用材料】
+                                        {formatted_states}
+
+                                        【输出结构与要求】
+                                    
+                                        一、项目基本信息对比（请原样列出）
+                                        - 申请人
+                                        - 依托单位
+                                        - 申请代码
+                                        - 项目题目
+                                        - 项目类型（青年/面上/重大项目/重点支持项目）
+                                        注意：
+                                                青年：以个人成长为主 → 为后续申报面上打基础。
+                                                面上：以稳定方向的连续探索为主 → 成果积累到一定程度后，可凝练为重点。
+                                                重点：在学科内具有关键意义的问题的加强版攻关 → 若问题上升到国家战略或重大前沿交叉层面，且需系统组织与多课题协同，则进一步形成重大项目。
+                                                专项：不直接对应科学问题攻关，而是支撑 NSFC 与学科生态（交流、战略研究、科普、平台），与上述科研项目不在一条赛道
+
+                                        A. 项目概述对比
+                                        - 准确概括各项目研究主题、技术主线与验证场景；给出与申请材料页/图的锚定。句句有据。〔来源：页/图〕
+
+                                        A.1. 来源锚定清单对比（要点式）
+                                        - 按"判断 → 来源来源（页/图/表/式） → 来源强度(高/中/低)"逐条列示，覆盖：研究基础、代表性成果、数据与算力条件、预研结果、应用场景。
+
+                                        B. 学术能力对比
+                                        - 列举学术能力，包括h index等内容
+                                        - 列举发表论文，包括论文数量、论文被引次数、论文影响因子等内容
+                                        
+                                        C. 科学问题与创新性对比
+                                        - 逐条结构：问题 → 申请书来源 → 本评审判断（与国内外的差异/预期增量） → 来源强度。
+                                        - 明确核心创新点不超过3条，每条都需有"式/图/流程"的来源锚定。
+
+                                        D. 技术路线与可行性对比,生成多个表格，一个表格对应一个文件
+                                        - 按模块/数据/人力/合规展开；每条均需来源锚定，并给出"可行性结论 + 风险等级"。
+
+                                        E. 对照实验与验证闭环对比,生成多个表格，一个表格对应一个文件
+                                        - 基线集
+                                        - 数据切分策略（
+                                        - 指标
+                                        - 统计检验
+                                        - 外部验证
+                                        - 复现要素
+
+                                        F. 风险与对策矩阵对比,生成多个表格，一个表格对应一个文件
+                                        - 列：风险 | 触发信号 | 缓解动作 | 备用方案 | 负责人/资源来源 | 时间
+                                        - 每行必须可执行（目标/动作/指标/验收/时间均完整），并标注来源强度与风险等级。
+
+                                        G. 里程碑与KPI对比,生成多个表格，一个表格对应一个文件
+                                        - 列：阶段 | 交付物 | 量化指标 | 验收口径 | 阻断条件
+                                        - 每条需页/图/表/式来源；若未见，写"〔来源：未见于材料〕"，并给出最低可行门槛。
+
+                                        H. 横向对比与取舍,生成多个表格，一个表格对应一个文件
+                                        - 关键差异矩阵（至少3个维度的正反对照）
+                                        - 取舍性判断（给出清晰理由）
+                                        - 主要问题与建议（3–6条，逐条"可执行"）
+                                        - 逐条格式：问题 → 目标 → 动作 → 指标 → 验收 → 负责人/资源 → 时间；每条标注风险等级与来源强度。
+
+                                        I. 评分与结论，生成多个，一个表格对应一个文件
+                                        - 维度（0.0–5.0）：创新性、科学意义、可行性、研究基础、团队与条件、经费匹配、风险控制。
+                                        - 给出加总/平均说明，并产出综合等级（优/良/中/差）。
+                                        - 资助建议：可资助 / 可资助并附条件 / 不建议资助。
+                                        - 若"附条件"，列2–3条"可量化里程碑"（阈值+时间点）。
+                                        - 每个分值后附一句依据+来源锚定；若依据不足，明确"〔来源：未见于材料〕"。
+
+                                        【额外要求】
+                                        - 若发现材料缺项导致无法判断，直接写明"因来源不足无法下结论"，并提供"最低可行补充清单（MVP）"，但不降低来源标准。
+                                        """
+                                        ,
+                                ),
+                                
+                            ]
+                        )
 
                         input_data = {
                             "file_count": len(raw_states),
@@ -845,7 +1005,7 @@ async def proposal_evaluation(
                         }
 
                         chain = prompt | graph.deep_thinking_llm
-                        chunks: List[str] = []
+                        chunks = []
                         async for chunk in chain.astream(input_data):
                             delta = getattr(chunk, "content", str(chunk))
                             if not delta:
@@ -883,29 +1043,111 @@ async def proposal_evaluation(
                     )
 
                     prompt = ChatPromptTemplate.from_messages(
-                        [
-                            (
-                                "system",
-                                """你是一个资深的、严格的国家自然基金委项目申请评审专家。你的任务是基于所有收集到的分析信息，生成一份尽可能全面、专业、结构化的项目/申请/论文的评估结果，语气要严肃""",
-                            ),
-                            (
-                                "human",
-                                """请基于以下全部分析信息，生成最终尽可能详尽的项目评估报告，内容要翔实充分具体！：\n学术分析：{academic_analysis_report}\n社会分析：{social_analysis_report}\n未来影响分析：{future_influence_report}\n辩论结果：{debate_results}\n最终分析摘要：{final_analysis_summary}\n完备性检查结果：{completeness_check_result}\n人类反馈：{human_feedback}""",
-                            ),
-                        ]
-                    )
+                                [
+                                    (
+                                        "system",
+                                        """
+                                            你是国家自然科学基金委员会项目评审专家。请仅依据【本轮提供的材料】进行评审并形成最终意见。
+
+                                            【硬性规则——务必全部满足】
+                                            1) 来源锚定：每一条关键判断与结论，句末必须标注来源，格式统一为：〔来源：第X页/图Y/表Z/式(K)/URL/DOI〕；”。
+                                            2) 信息边界：禁止使用、臆测或补充任何外部信息（含常识、既往经验、网络资料）。若输入材料本身包含外部资料，请以“〔外部资料：……，不计入评分依据〕”单独标注，并与正式结论分段隔离。
+                                            3) 可执行性：每条“问题/建议”均需落地为可执行条目（含：目标/动作/指标/验收/负责人或资源来源/时间）。
+                                            4) 科学性：必须给出对照实验设计与验证闭环（含：基线、数据切分、统计检验、外部验证与复现要素）。缺项时明确写明并给出“最低可行补充清单（MVP）”。
+                                            5) 风险透明：对关键结论标注“来源强度(高/中/低)”与“风险等级(高/中/低)”，二者分别独立判断。
+                                            6) NSFC口径：语气客观克制、就事论事；不使用宣传化、市场化措辞；篇章结构符合NSFC常见评审格式。
+
+                                            【写作与版式要求】
+                                            - 全文中文；结构化小标题；重要信息用 Markdown 表格呈现。
+                                            - 所有页码/图表编号必须出自本申请材料；不得输出网址或外部参考链接。
+                                            - 若材料存在缺项，请明确指出并给出MVP补充清单，但不得捏造信息。
+                                            """
+                                    ),
+                                    (
+                                        "human",
+                                        """
+                            请基于以下全部输入，生成“国家自然科学基金项目评审意见（青年/面上/重大项目/）”。内容要求翔实、可追溯、可执行，并严格遵守 system 中的硬性规则。
+
+                            【可用材料】
+                            - 学术分析：{academic_analysis_report}
+                            - 未来影响分析：{future_influence_report}
+                            - 辩论结果（多智能体交叉评议）：{debate_results}
+                            - 原始pdf结构化信息: {research_structure}
+
+                           
+
+                            【输出结构与要求】
+                            
+                            项目基本信息（请原样列出）
+                            - 申请人
+                            - 依托单位
+                            - 申请代码
+                            - 项目题目
+                            - 项目类型（青年/面上/重大项目/重点支持项目）
+                            注意：
+                                    青年：以个人成长为主 → 为后续申报面上打基础。
+                                    面上：以稳定方向的连续探索为主 → 成果积累到一定程度后，可凝练为重点。
+                                    重点：在学科内具有关键意义的问题的加强版攻关 → 若问题上升到国家战略或重大前沿交叉层面，且需系统组织与多课题协同，则进一步形成重大项目。
+                                    专项：不直接对应科学问题攻关，而是支撑 NSFC 与学科生态（交流、战略研究、科普、平台），与上述科研项目不在一条赛道
+                            A. 项目概述（
+                            - 准确概括研究主题、技术主线与验证场景；给出与申请材料页/图的锚定。句句有据。〔来源：页/图〕
+
+                            B. 来源锚定清单（要点式）
+                            - 按“判断 → 来源来源（页/图/表/式） → 来源强度(高/中/低)”逐条列示，覆盖：研究基础、代表性成果、数据与算力条件、预研结果、应用场景。
+
+                            C. 科学问题与创新性
+                            - 逐条结构：问题 → 申请书来源 → 本评审判断（与国内外的差异/预期增量） → 来源强度。
+                            - 明确核心创新点不超过3条，每条都需有“式/图/流程”的来源锚定。
+
+                            D. 技术路线与可行性
+                            - 按模块/数据/人力/合规展开；每条均需来源锚定，并给出“可行性结论 + 风险等级”。
+
+                            E. 对照实验与验证闭环（强制）
+                            - 基线集（≥3类可比方法：经典ML/可解释方法/现有AutoFE或SOTA）；
+                            - 数据切分策略（患者/实体级、时间切分或K折；避免泄露）；
+                            - 指标（分类/回归/聚类分别列出）；
+                            - 统计检验（配对t或Wilcoxon，含多重校正）；
+                            - 外部验证（至少1个独立公开队列）；
+                            - 复现要素（环境/Docker或requirements、随机种子、日志与追溯）。
+                            - 每项后给出“验收口径”；缺项写“〔来源：未见于材料〕”，并附MVP补充清单。
+
+                            F. 风险与对策矩阵（表格）
+                            - 列：风险 | 触发信号 | 缓解动作 | 备用方案 | 负责人/资源来源 | 时间
+                            - 每行必须可执行（目标/动作/指标/验收/时间均完整），并标注来源强度与风险等级。
+
+                            G. 里程碑与KPI（表格，M0–M6 / M6–M18 / M18–M36 / 结题）
+                            - 列：阶段 | 交付物 | 量化指标 | 验收口径 | 阻断条件
+                            - 每条需页/图/表/式来源；若未见，写“〔来源：未见于材料〕”，并给出最低可行门槛。
+
+                            H. 主要问题与建议（3–6条，逐条“可执行”）
+                            - 逐条格式：问题 → 目标 → 动作 → 指标 → 验收 → 负责人/资源 → 时间；每条标注风险等级与来源强度。
+
+                            I. 评分与结论
+                            - 维度（0.0–5.0）：创新性、科学意义、可行性、研究基础、团队与条件、经费匹配、风险控制。
+                            - 给出加总/平均说明，并产出综合等级（优/良/中/差）。
+                            - 资助建议：可资助 / 可资助并附条件 / 不建议资助。
+                            - 若“附条件”，列2–3条“可量化里程碑”（阈值+时间点）。
+                            - 每个分值后附一句依据+来源锚定；若依据不足，明确“〔来源：未见于材料〕”。
+
+                            【额外要求】
+                            - 若发现材料缺项导致无法判断，直接写明“因来源不足无法下结论”，并提供“最低可行补充清单（MVP）”，但不降低来源标准。
+                            """
+                                    ),
+                                ]
+                            )
+
 
                     input_data = {
                         "academic_analysis_report": raw_state.get("academic_analysis_report", "未进行学术分析"),
-                        "social_analysis_report": raw_state.get("social_analysis_report", "未进行社会分析"),
                         "future_influence_report": raw_state.get("future_influence_report", "未进行未来影响分析"),
                      #   "interdisciplinary_results": raw_state.get("interdisciplinary_results", []),
+                        "research_structure": raw_state.get("research_structure", "无"),
                         "debate_results": _format_debate_results(raw_state.get("debate_results", {})),
-                        "final_analysis_summary": raw_state.get("final_analysis_summary", "未完成最终分析"),
-                        "completeness_check_result": _format_completeness_result(
-                            raw_state.get("completeness_check_result", {})
-                        ),
-                        "human_feedback": raw_state.get("human_feedback", "无人类反馈"),
+                        # "final_analysis_summary": raw_state.get("final_analysis_summary", "未完成最终分析"),
+                        # "completeness_check_result": _format_completeness_result(
+                        #     raw_state.get("completeness_check_result", {})
+                        # ),
+                        # "human_feedback": raw_state.get("human_feedback", "无人类反馈"),
                     }
 
                     chain = prompt | graph.deep_thinking_llm

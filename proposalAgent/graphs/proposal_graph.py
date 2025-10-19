@@ -19,7 +19,7 @@ from proposalAgent.tools.academic_analysis.google_scholar import get_article_bri
 # from proposalAgent.tools.academic_analysis.wos_util import wos_expanded_search, wos_expanded_citation_fanout, wos_citation_influence_summary
 from proposalAgent.tools.secondary_discipline_rag import secondary_discipline_search
 from proposalAgent.tools.baidu_util import baidu_search_with_content
-
+from proposalAgent.tools.tavily_util import tavily_search
 from proposalAgent.graphs.setup import GraphSetup
 from proposalAgent.graphs.conditional_logic import ConditionalLogic
 from proposalAgent.graphs.propagation import Propagator
@@ -61,8 +61,8 @@ class ProposalAgentGraph:
         self.tool_nodes = self._create_tool_nodes()
         
         self.conditional_logic = ConditionalLogic()
-        if getattr(self.conditional_logic, "max_debate_rounds", 1) < 3:
-            self.conditional_logic.max_debate_rounds = 3
+        if getattr(self.conditional_logic, "max_debate_rounds", 1) < 2:
+            self.conditional_logic.max_debate_rounds = 2
         
         self.graph_setup = GraphSetup(
             quick_thinking_llm=self.quick_thinking_llm,
@@ -160,12 +160,12 @@ class ProposalAgentGraph:
         """创建工具节点"""
         return {
             "academic": ToolNode([
-                get_article_brief, resolve_author_candidates, get_author_citations, get_author_citations_auto, get_author_articles_citations,
+                get_article_brief, resolve_author_candidates, get_author_citations, get_author_citations_auto, get_author_articles_citations,tavily_search
           #      wos_expanded_search, wos_expanded_citation_fanout, wos_citation_influence_summary
                 ]),
             "social": ToolNode([]),
             "influence": ToolNode([
-                baidu_search_with_content,
+                tavily_search
                 ]),
             "interdisciplinary": ToolNode([secondary_discipline_search]),
             "feasibility": ToolNode([]),

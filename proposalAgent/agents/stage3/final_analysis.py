@@ -43,19 +43,19 @@ def create_final_analyst_agent(llm: ChatOpenAI):
             "human", 
             """基于当前状态中的所有信息，请进行综合分析：
 
-            研究主题：{research_topic}
-            申请人信息：{research_person_info}
-            基本信息：{research_basic_info}
-            项目团队信息：{research_project_team_info}
-            项目申请信息：{research_project_apply_info}
-            报告主体摘要：{research_report_body_summary}
+            ## 研究主题：{research_topic} 
+            ## 申请人信息：{research_person_info}
+            ## 基本信息：{research_basic_info}
+            ## 项目团队信息：{research_project_team_info}
+            ## 项目申请信息：{research_project_apply_info}
+            ## 报告主体摘要：{research_report_body_summary}
 
             分析报告：
-            学术分析：{academic_analysis_report}
-            未来影响分析：{future_influence_report}
+            ## 学术分析：{academic_analysis_report}
+            ## 未来影响分析：{future_influence_report}
 
 
-            辩论结果：{debate_results}
+            ## 辩论结果：{debate_results}
             请提供全面的综合分析和完整的总结。"""
         ),
     ])
@@ -89,7 +89,6 @@ def create_final_analyst_agent(llm: ChatOpenAI):
             state["final_analysis_summary"] = cast(str, final_analysis_summary)
             state["messages"].append(AIMessage(content=f"最终分析完成：\n{final_analysis_summary}"))
         else:
-            # 调用LLM进行分析
             chain = prompt | llm
             result = chain.invoke(input_data)
             
